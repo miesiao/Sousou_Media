@@ -1,0 +1,1075 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>隅消息上稿系統</title>
+<style>
+  :root {
+    --color-bg: #f5f6f8;
+    --color-surface: #ffffff;
+    --color-border: #dde1e6;
+    --color-text: #1f2430;
+    --color-text-muted: #6b7280;
+    --color-primary: #2f5ee0;
+    --color-primary-hover: #2549b3;
+    --color-primary-text: #ffffff;
+    --color-success: #1a8a4a;
+    --color-success-bg: #e7f6ec;
+    --color-error: #c8372f;
+    --color-error-bg: #fdeceb;
+    --color-warning: #a5680a;
+    --color-warning-bg: #fdf3e0;
+    --color-skip: #6b7280;
+    --color-skip-bg: #eef0f3;
+    --radius: 8px;
+    --shadow-sm: 0 1px 2px rgba(20, 24, 33, 0.06);
+    --shadow-md: 0 4px 16px rgba(20, 24, 33, 0.10);
+  }
+
+  * { box-sizing: border-box; }
+
+  html, body {
+    margin: 0;
+    padding: 0;
+    background: var(--color-bg);
+    color: var(--color-text);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang TC", "Microsoft JhengHei", "Noto Sans TC", sans-serif;
+    font-size: 15px;
+    line-height: 1.6;
+  }
+
+  .app-shell {
+    max-width: 1080px;
+    margin: 0 auto;
+    padding: 32px 24px 80px;
+  }
+
+  header.app-header {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    margin-bottom: 24px;
+  }
+
+  header.app-header h1 {
+    font-size: 20px;
+    font-weight: 700;
+    margin: 0;
+  }
+
+  header.app-header .subtitle {
+    color: var(--color-text-muted);
+    font-size: 13px;
+  }
+
+  .card {
+    background: var(--color-surface);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius);
+    box-shadow: var(--shadow-sm);
+    padding: 24px;
+    margin-bottom: 20px;
+  }
+
+  .hidden { display: none !important; }
+
+  /* ---- 表單元件 ---- */
+  label {
+    display: block;
+    font-weight: 600;
+    font-size: 13px;
+    margin-bottom: 6px;
+    color: var(--color-text);
+  }
+
+  input[type="password"],
+  input[type="text"] {
+    width: 100%;
+    padding: 10px 12px;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius);
+    font-size: 14px;
+    color: var(--color-text);
+    background: var(--color-surface);
+  }
+
+  input[type="password"]:focus,
+  input[type="text"]:focus,
+  textarea:focus {
+    outline: none;
+    border-color: var(--color-primary);
+    box-shadow: 0 0 0 3px rgba(47, 94, 224, 0.15);
+  }
+
+  textarea {
+    width: 100%;
+    min-height: 420px;
+    padding: 12px;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius);
+    font-size: 14px;
+    font-family: ui-monospace, SFMono-Regular, "Cascadia Mono", Consolas, monospace;
+    line-height: 1.6;
+    resize: vertical;
+    color: var(--color-text);
+    background: var(--color-surface);
+  }
+
+  .field { margin-bottom: 18px; }
+
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    padding: 10px 18px;
+    font-size: 14px;
+    font-weight: 600;
+    border-radius: var(--radius);
+    border: 1px solid transparent;
+    cursor: pointer;
+    background: var(--color-primary);
+    color: var(--color-primary-text);
+    transition: background-color 0.15s ease;
+  }
+  .btn:hover:not(:disabled) { background: var(--color-primary-hover); }
+  .btn:disabled { opacity: 0.55; cursor: not-allowed; }
+
+  .btn-secondary {
+    background: var(--color-surface);
+    color: var(--color-text);
+    border: 1px solid var(--color-border);
+  }
+  .btn-secondary:hover:not(:disabled) { background: #f0f1f4; }
+
+  .btn-skip {
+    background: var(--color-surface);
+    color: var(--color-skip);
+    border: 1px solid var(--color-border);
+  }
+  .btn-skip:hover:not(:disabled) { background: var(--color-skip-bg); }
+
+  .btn-row {
+    display: flex;
+    gap: 10px;
+    flex-wrap: wrap;
+    align-items: center;
+  }
+
+  /* ---- 登入畫面 ---- */
+  #view-login {
+    max-width: 380px;
+    margin: 80px auto 0;
+  }
+  #view-login h2 {
+    margin-top: 0;
+    font-size: 17px;
+  }
+
+  /* ---- 訊息 / 提示 ---- */
+  .alert {
+    border-radius: var(--radius);
+    padding: 12px 14px;
+    font-size: 13.5px;
+    margin-bottom: 14px;
+    border: 1px solid transparent;
+  }
+  .alert-error {
+    background: var(--color-error-bg);
+    color: var(--color-error);
+    border-color: rgba(200, 55, 47, 0.25);
+  }
+  .alert-warning {
+    background: var(--color-warning-bg);
+    color: var(--color-warning);
+    border-color: rgba(165, 104, 10, 0.25);
+  }
+  .alert-success {
+    background: var(--color-success-bg);
+    color: var(--color-success);
+    border-color: rgba(26, 138, 74, 0.25);
+  }
+
+  /* ---- loading ---- */
+  .loading-box {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 20px;
+    color: var(--color-text-muted);
+    font-size: 14px;
+  }
+  .spinner {
+    width: 20px;
+    height: 20px;
+    border: 3px solid var(--color-border);
+    border-top-color: var(--color-primary);
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+    flex-shrink: 0;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+
+  /* ---- 關鍵字 chips ---- */
+  .chip-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin: 8px 0 4px;
+  }
+  .chip {
+    background: #eef1fb;
+    color: var(--color-primary);
+    border: 1px solid #d5dcf6;
+    border-radius: 999px;
+    padding: 4px 12px;
+    font-size: 12.5px;
+    font-weight: 600;
+  }
+
+  /* ---- 來源狀態 ---- */
+  .source-status-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+    margin: 8px 0 4px;
+  }
+  .source-status-item {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 12.5px;
+    padding: 5px 10px;
+    border-radius: 999px;
+    border: 1px solid var(--color-border);
+    background: #f8f9fb;
+    color: var(--color-text-muted);
+  }
+  .source-status-item .dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    flex-shrink: 0;
+  }
+  .dot-ok { background: var(--color-success); }
+  .dot-skipped { background: #b9bec8; }
+  .dot-error { background: var(--color-error); }
+
+  /* ---- 重新搜尋列 ---- */
+  .research-bar {
+    display: flex;
+    gap: 8px;
+    margin-bottom: 18px;
+  }
+  .research-bar input { flex: 1; }
+
+  /* ---- 候選圖 grid ---- */
+  .candidate-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+    gap: 16px;
+    margin-top: 8px;
+  }
+
+  .candidate-card {
+    position: relative;
+    border: 2px solid var(--color-border);
+    border-radius: var(--radius);
+    overflow: hidden;
+    background: var(--color-surface);
+    cursor: pointer;
+    transition: border-color 0.15s ease, box-shadow 0.15s ease;
+    display: flex;
+    flex-direction: column;
+  }
+  .candidate-card:hover { border-color: #b7c2ee; }
+  .candidate-card.selected {
+    border-color: var(--color-primary);
+    box-shadow: 0 0 0 3px rgba(47, 94, 224, 0.18);
+  }
+
+  .candidate-thumb-wrap {
+    position: relative;
+    width: 100%;
+    height: 150px;
+    background: #eceff2;
+  }
+  .candidate-thumb-wrap img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    display: block;
+  }
+
+  .candidate-checkbox {
+    position: absolute;
+    top: 8px;
+    left: 8px;
+    width: 20px;
+    height: 20px;
+    pointer-events: none;
+  }
+
+  .candidate-order-badge {
+    position: absolute;
+    top: 8px;
+    right: 8px;
+    min-width: 24px;
+    height: 24px;
+    padding: 0 6px;
+    border-radius: 999px;
+    background: var(--color-primary);
+    color: #fff;
+    font-size: 12px;
+    font-weight: 700;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .candidate-order-badge.featured {
+    background: #e0a411;
+  }
+
+  .featured-hint {
+    position: absolute;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    background: rgba(224, 164, 17, 0.92);
+    color: #fff;
+    font-size: 11px;
+    font-weight: 600;
+    text-align: center;
+    padding: 3px 4px;
+  }
+
+  .candidate-meta {
+    padding: 10px 12px 12px;
+    font-size: 12.5px;
+    color: var(--color-text-muted);
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+  }
+  .candidate-meta .creator {
+    color: var(--color-text);
+    font-weight: 600;
+    font-size: 13px;
+  }
+  .candidate-meta .source-line {
+    display: flex;
+    justify-content: space-between;
+    gap: 6px;
+  }
+  .candidate-meta a {
+    color: var(--color-primary);
+    text-decoration: none;
+  }
+  .candidate-meta a:hover { text-decoration: underline; }
+  .source-page-link { align-self: flex-start; }
+
+  .selection-summary {
+    font-size: 13px;
+    color: var(--color-text-muted);
+    margin-bottom: 12px;
+  }
+  .selection-summary strong { color: var(--color-text); }
+
+  .empty-hint {
+    padding: 30px;
+    text-align: center;
+    color: var(--color-text-muted);
+    font-size: 13.5px;
+  }
+
+  /* ---- 結果步驟 ---- */
+  .step-list {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    margin: 16px 0 20px;
+  }
+  .step-item {
+    display: flex;
+    align-items: flex-start;
+    gap: 10px;
+    padding: 12px 14px;
+    border-radius: var(--radius);
+    border: 1px solid var(--color-border);
+    background: #fafbfc;
+  }
+  .step-item .step-icon { font-size: 16px; line-height: 1.4; }
+  .step-item .step-body { flex: 1; }
+  .step-item .step-title { font-weight: 700; font-size: 13.5px; }
+  .step-item .step-message { color: var(--color-text-muted); font-size: 13px; margin-top: 2px; }
+  .step-item.status-ok { border-color: rgba(26, 138, 74, 0.3); background: var(--color-success-bg); }
+  .step-item.status-error { border-color: rgba(200, 55, 47, 0.3); background: var(--color-error-bg); }
+  .step-item.status-skipped { border-color: var(--color-border); background: #f2f3f5; }
+
+  .result-links {
+    display: flex;
+    gap: 10px;
+    flex-wrap: wrap;
+    margin-bottom: 20px;
+  }
+
+  .result-banner {
+    font-weight: 700;
+    font-size: 15px;
+    margin-bottom: 4px;
+  }
+
+  .section-title {
+    font-size: 14px;
+    font-weight: 700;
+    margin: 0 0 10px;
+  }
+
+  .helper-text {
+    color: var(--color-text-muted);
+    font-size: 12.5px;
+    margin-top: 4px;
+  }
+
+  footer.app-footer {
+    text-align: center;
+    color: var(--color-text-muted);
+    font-size: 12px;
+    margin-top: 40px;
+  }
+</style>
+</head>
+<body>
+
+<div class="app-shell">
+  <header class="app-header">
+    <div>
+      <h1>隅消息上稿系統</h1>
+      <div class="subtitle">貼稿 → 自動搜圖 → 一鍵完成 WordPress 草稿 / Drive 存檔 / Sheets 記錄</div>
+    </div>
+    <div>
+      <button type="button" id="btn-logout" class="btn btn-secondary hidden">登出</button>
+    </div>
+  </header>
+
+  <!-- ========== 登入畫面 ========== -->
+  <section id="view-login" class="card hidden">
+    <h2>請輸入密碼</h2>
+    <div id="login-alert"></div>
+    <form id="login-form">
+      <div class="field">
+        <label for="login-password">密碼</label>
+        <input type="password" id="login-password" autocomplete="current-password" autofocus />
+      </div>
+      <button type="submit" class="btn" id="btn-login">登入</button>
+    </form>
+  </section>
+
+  <!-- ========== 貼稿畫面 ========== -->
+  <section id="view-compose" class="card hidden">
+    <h2 class="section-title">貼上文章</h2>
+    <div id="compose-alert"></div>
+    <form id="compose-form">
+      <div class="field">
+        <label for="compose-title">文章標題</label>
+        <input type="text" id="compose-title" placeholder="輸入文章標題" />
+      </div>
+      <div class="field">
+        <label for="compose-markdown">文章內文（Markdown）</label>
+        <textarea id="compose-markdown" placeholder="貼上文章 Markdown 內文…"></textarea>
+      </div>
+      <div class="btn-row">
+        <button type="submit" class="btn" id="btn-submit">送出並搜圖</button>
+      </div>
+    </form>
+    <div id="compose-loading" class="loading-box hidden">
+      <div class="spinner"></div>
+      <div>正在抽取關鍵字與搜尋圖庫，約需數秒…</div>
+    </div>
+  </section>
+
+  <!-- ========== 挑圖畫面 ========== -->
+  <section id="view-pick" class="card hidden">
+    <h2 class="section-title">選擇配圖</h2>
+
+    <div id="keyword-block" class="field">
+      <label>自動抽取的關鍵字</label>
+      <div id="keyword-chips" class="chip-row"></div>
+      <div id="keyword-error" class="alert alert-warning hidden"></div>
+    </div>
+
+    <div id="source-status-block" class="field">
+      <label>圖庫來源狀態</label>
+      <div id="source-status-row" class="source-status-row"></div>
+    </div>
+
+    <div class="research-bar">
+      <input type="text" id="research-keyword" placeholder="輸入關鍵字重新搜尋（可自訂）" />
+      <button type="button" class="btn btn-secondary" id="btn-research">重新搜尋</button>
+    </div>
+    <div id="research-loading" class="loading-box hidden">
+      <div class="spinner"></div>
+      <div>正在重新搜尋圖片…</div>
+    </div>
+    <div id="research-alert"></div>
+
+    <div class="selection-summary" id="selection-summary">尚未選取任何圖片。</div>
+
+    <div id="candidate-grid" class="candidate-grid"></div>
+    <div id="candidate-empty" class="empty-hint hidden">目前沒有候選圖，可調整關鍵字後重新搜尋，或直接跳過配圖。</div>
+
+    <div class="btn-row" style="margin-top:20px;">
+      <button type="button" class="btn" id="btn-publish">確認送出</button>
+      <button type="button" class="btn btn-skip" id="btn-skip">跳過配圖並送出</button>
+      <button type="button" class="btn btn-secondary" id="btn-back-compose">返回修改文章</button>
+    </div>
+    <div id="publish-loading" class="loading-box hidden">
+      <div class="spinner"></div>
+      <div>正在上傳圖片與建立草稿…</div>
+    </div>
+  </section>
+
+  <!-- ========== 結果畫面 ========== -->
+  <section id="view-result" class="card hidden">
+    <h2 class="section-title">上稿結果</h2>
+    <div id="result-banner" class="result-banner"></div>
+    <div id="result-links" class="result-links"></div>
+    <div id="step-list" class="step-list"></div>
+    <div class="btn-row">
+      <button type="button" class="btn" id="btn-next-article">上稿下一篇</button>
+    </div>
+  </section>
+
+  <footer class="app-footer">隅消息上稿系統 · 內部工具</footer>
+</div>
+
+<script>
+(function () {
+  'use strict';
+
+  // ---------------- 常數 ----------------
+  var SOURCE_LABELS = {
+    pexels: 'Pexels',
+    unsplash: 'Unsplash',
+    openverse: 'Openverse',
+    wikimedia: 'Wikimedia Commons'
+  };
+
+  var STATUS_LABELS = {
+    ok: '正常',
+    skipped: '略過',
+    error: '錯誤'
+  };
+
+  // ---------------- 全域狀態 ----------------
+  var state = {
+    taskId: null,
+    candidates: [],           // 目前候選圖清單
+    selectedOrder: [],        // 已選圖片 id，依選取順序
+  };
+
+  // ---------------- DOM 參照 ----------------
+  var el = {
+    btnLogout: document.getElementById('btn-logout'),
+
+    viewLogin: document.getElementById('view-login'),
+    loginForm: document.getElementById('login-form'),
+    loginPassword: document.getElementById('login-password'),
+    loginAlert: document.getElementById('login-alert'),
+    btnLogin: document.getElementById('btn-login'),
+
+    viewCompose: document.getElementById('view-compose'),
+    composeForm: document.getElementById('compose-form'),
+    composeTitle: document.getElementById('compose-title'),
+    composeMarkdown: document.getElementById('compose-markdown'),
+    composeAlert: document.getElementById('compose-alert'),
+    composeLoading: document.getElementById('compose-loading'),
+    btnSubmit: document.getElementById('btn-submit'),
+
+    viewPick: document.getElementById('view-pick'),
+    keywordChips: document.getElementById('keyword-chips'),
+    keywordError: document.getElementById('keyword-error'),
+    sourceStatusRow: document.getElementById('source-status-row'),
+    researchKeyword: document.getElementById('research-keyword'),
+    btnResearch: document.getElementById('btn-research'),
+    researchLoading: document.getElementById('research-loading'),
+    researchAlert: document.getElementById('research-alert'),
+    selectionSummary: document.getElementById('selection-summary'),
+    candidateGrid: document.getElementById('candidate-grid'),
+    candidateEmpty: document.getElementById('candidate-empty'),
+    btnPublish: document.getElementById('btn-publish'),
+    btnSkip: document.getElementById('btn-skip'),
+    btnBackCompose: document.getElementById('btn-back-compose'),
+    publishLoading: document.getElementById('publish-loading'),
+
+    viewResult: document.getElementById('view-result'),
+    resultBanner: document.getElementById('result-banner'),
+    resultLinks: document.getElementById('result-links'),
+    stepList: document.getElementById('step-list'),
+    btnNextArticle: document.getElementById('btn-next-article')
+  };
+
+  // ---------------- 工具函式 ----------------
+
+  function escapeHtml(str) {
+    if (str === null || str === undefined) return '';
+    return String(str)
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;');
+  }
+
+  function showView(name) {
+    ['viewLogin', 'viewCompose', 'viewPick', 'viewResult'].forEach(function (key) {
+      el[key].classList.add('hidden');
+    });
+    el[name].classList.remove('hidden');
+    el.btnLogout.classList.toggle('hidden', name === 'viewLogin');
+  }
+
+  function setAlert(container, message, type) {
+    if (!message) {
+      container.innerHTML = '';
+      return;
+    }
+    var cls = 'alert-' + (type || 'error');
+    container.innerHTML = '<div class="alert ' + cls + '">' + escapeHtml(message) + '</div>';
+  }
+
+  function clearAlert(container) {
+    container.innerHTML = '';
+  }
+
+  /**
+   * 統一 fetch 包裝：帶 credentials、解析 JSON、處理 401 與網路錯誤。
+   * 回傳 Promise<{ok, status, data}>；發生 401 時會自動導回登入畫面。
+   */
+  function apiFetch(url, options) {
+    var opts = options || {};
+    opts.credentials = 'same-origin';
+    if (opts.body && typeof opts.body !== 'string') {
+      opts.body = JSON.stringify(opts.body);
+    }
+    if (opts.body) {
+      opts.headers = Object.assign({ 'Content-Type': 'application/json' }, opts.headers || {});
+    }
+
+    return fetch(url, opts)
+      .catch(function () {
+        throw { networkError: true };
+      })
+      .then(function (res) {
+        return res.json().catch(function () {
+          return {};
+        }).then(function (data) {
+          if (res.status === 401) {
+            handleUnauthorized();
+            var err = new Error((data && data.error) || '尚未登入或登入已過期');
+            err.status = 401;
+            throw err;
+          }
+          if (!res.ok) {
+            var e = new Error((data && data.error) || ('請求失敗（狀態碼 ' + res.status + '）'));
+            e.status = res.status;
+            throw e;
+          }
+          return data;
+        });
+      })
+      .catch(function (err) {
+        if (err && err.networkError) {
+          throw new Error('網路連線異常，請確認網路後重試。');
+        }
+        throw err;
+      });
+  }
+
+  function handleUnauthorized() {
+    showView('viewLogin');
+    setAlert(el.loginAlert, '登入已過期，請重新登入。', 'warning');
+  }
+
+  // ---------------- 登入流程 ----------------
+
+  function checkSession() {
+    return apiFetch('/api/session', { method: 'GET' })
+      .then(function (data) {
+        if (data && data.authenticated) {
+          showView('viewCompose');
+        } else {
+          showView('viewLogin');
+        }
+      })
+      .catch(function (err) {
+        showView('viewLogin');
+        setAlert(el.loginAlert, err.message || '無法確認登入狀態，請重新整理頁面。', 'error');
+      });
+  }
+
+  el.loginForm.addEventListener('submit', function (evt) {
+    evt.preventDefault();
+    clearAlert(el.loginAlert);
+    var password = el.loginPassword.value;
+    if (!password) {
+      setAlert(el.loginAlert, '請輸入密碼。', 'error');
+      return;
+    }
+    el.btnLogin.disabled = true;
+    el.btnLogin.textContent = '登入中…';
+    apiFetch('/api/login', { method: 'POST', body: { password: password } })
+      .then(function () {
+        el.loginPassword.value = '';
+        showView('viewCompose');
+      })
+      .catch(function (err) {
+        setAlert(el.loginAlert, err.message || '登入失敗，請重試。', 'error');
+      })
+      .then(function () {
+        el.btnLogin.disabled = false;
+        el.btnLogin.textContent = '登入';
+      });
+  });
+
+  el.btnLogout.addEventListener('click', function () {
+    // 後端未提供登出 API：清除畫面狀態並提示重新整理，session cookie 由後端 Max-Age 控制。
+    resetComposeState();
+    showView('viewLogin');
+    setAlert(el.loginAlert, '如需結束使用，請關閉分頁；若要切換帳號，請清除瀏覽器 Cookie。', 'warning');
+  });
+
+  // ---------------- 貼稿流程 ----------------
+
+  function resetComposeState() {
+    el.composeTitle.value = '';
+    el.composeMarkdown.value = '';
+    clearAlert(el.composeAlert);
+    state.taskId = null;
+    state.candidates = [];
+    state.selectedOrder = [];
+  }
+
+  el.composeForm.addEventListener('submit', function (evt) {
+    evt.preventDefault();
+    clearAlert(el.composeAlert);
+
+    var title = el.composeTitle.value.trim();
+    var markdown = el.composeMarkdown.value.trim();
+
+    if (!title) {
+      setAlert(el.composeAlert, '請輸入文章標題。', 'error');
+      return;
+    }
+    if (!markdown) {
+      setAlert(el.composeAlert, '請貼上文章內文。', 'error');
+      return;
+    }
+
+    el.btnSubmit.disabled = true;
+    el.composeLoading.classList.remove('hidden');
+
+    apiFetch('/api/submit', { method: 'POST', body: { title: title, markdown: markdown } })
+      .then(function (data) {
+        state.taskId = data.taskId;
+        state.candidates = Array.isArray(data.candidates) ? data.candidates : [];
+        state.selectedOrder = [];
+
+        renderKeywords(data.keywords || [], data.keywordError || null);
+        renderSourceStatus(data.sourceStatus || null);
+        renderCandidates();
+        clearAlert(el.researchAlert);
+        el.researchKeyword.value = '';
+
+        showView('viewPick');
+      })
+      .catch(function (err) {
+        setAlert(el.composeAlert, err.message || '送出失敗，請重試。', 'error');
+      })
+      .then(function () {
+        el.btnSubmit.disabled = false;
+        el.composeLoading.classList.add('hidden');
+      });
+  });
+
+  // ---------------- 挑圖畫面渲染 ----------------
+
+  function renderKeywords(keywords, keywordError) {
+    if (!keywords.length) {
+      el.keywordChips.innerHTML = '<span class="helper-text">（無自動抽取的關鍵字）</span>';
+    } else {
+      el.keywordChips.innerHTML = keywords.map(function (kw) {
+        return '<span class="chip">' + escapeHtml(kw) + '</span>';
+      }).join('');
+    }
+
+    if (keywordError) {
+      setAlert(el.keywordError, '關鍵字抽取發生問題：' + keywordError + '（可於下方手動輸入關鍵字重新搜尋）', 'warning');
+      el.keywordError.classList.remove('hidden');
+    } else {
+      el.keywordError.classList.add('hidden');
+      el.keywordError.innerHTML = '';
+    }
+  }
+
+  function renderSourceStatus(sourceStatus) {
+    if (!sourceStatus) {
+      el.sourceStatusRow.innerHTML = '<span class="helper-text">（無來源狀態資訊）</span>';
+      return;
+    }
+    var order = ['pexels', 'unsplash', 'openverse', 'wikimedia'];
+    var html = '';
+    order.forEach(function (key) {
+      var info = sourceStatus[key];
+      if (!info) return;
+      var label = SOURCE_LABELS[key] || key;
+      var statusText = STATUS_LABELS[info.status] || info.status;
+      var count = (typeof info.count === 'number') ? '（' + info.count + ' 張）' : '';
+      var dotClass = 'dot-' + (info.status === 'ok' ? 'ok' : (info.status === 'error' ? 'error' : 'skipped'));
+      var msg = info.message ? '：' + escapeHtml(info.message) : '';
+      html += '<span class="source-status-item" title="' + escapeHtml(info.message || '') + '">' +
+        '<span class="dot ' + dotClass + '"></span>' +
+        '<span>' + escapeHtml(label) + ' ' + escapeHtml(statusText) + count + msg + '</span>' +
+        '</span>';
+    });
+    el.sourceStatusRow.innerHTML = html || '<span class="helper-text">（無來源狀態資訊）</span>';
+  }
+
+  function renderCandidates() {
+    // 選取順序清理：移除已不存在於候選清單中的 id
+    var candidateIds = {};
+    state.candidates.forEach(function (c) { candidateIds[c.id] = true; });
+    state.selectedOrder = state.selectedOrder.filter(function (id) { return candidateIds[id]; });
+
+    if (!state.candidates.length) {
+      el.candidateGrid.innerHTML = '';
+      el.candidateEmpty.classList.remove('hidden');
+    } else {
+      el.candidateEmpty.classList.add('hidden');
+      el.candidateGrid.innerHTML = state.candidates.map(renderCandidateCard).join('');
+    }
+
+    updateSelectionSummary();
+    bindCandidateCardEvents();
+  }
+
+  function renderCandidateCard(c) {
+    var selectedIndex = state.selectedOrder.indexOf(c.id);
+    var isSelected = selectedIndex !== -1;
+    var orderNum = selectedIndex + 1;
+    var isFeatured = isSelected && orderNum === 1;
+
+    var sourceLabel = SOURCE_LABELS[c.source] || c.source;
+    var licenseHtml = c.license
+      ? (c.licenseUrl
+          ? '<a href="' + escapeHtml(c.licenseUrl) + '" target="_blank" rel="noopener" onclick="event.stopPropagation();">' + escapeHtml(c.license) + '</a>'
+          : escapeHtml(c.license))
+      : '（未標示授權）';
+
+    var badgeHtml = '';
+    var hintHtml = '';
+    if (isSelected) {
+      badgeHtml = '<span class="candidate-order-badge' + (isFeatured ? ' featured' : '') + '">' + orderNum + '</span>';
+      if (isFeatured) {
+        hintHtml = '<div class="featured-hint">第 1 張將作為精選圖片</div>';
+      }
+    }
+
+    var sourcePageHtml = c.sourcePageUrl
+      ? '<a class="source-page-link" href="' + escapeHtml(c.sourcePageUrl) + '" target="_blank" rel="noopener" onclick="event.stopPropagation();">來源頁 ↗</a>'
+      : '';
+
+    return '' +
+      '<div class="candidate-card' + (isSelected ? ' selected' : '') + '" data-id="' + escapeHtml(c.id) + '">' +
+        '<div class="candidate-thumb-wrap">' +
+          '<input type="checkbox" class="candidate-checkbox" ' + (isSelected ? 'checked' : '') + ' tabindex="-1" />' +
+          '<img src="' + escapeHtml(c.thumbUrl) + '" alt="候選圖片" loading="lazy" />' +
+          badgeHtml +
+          hintHtml +
+        '</div>' +
+        '<div class="candidate-meta">' +
+          '<div class="creator">' + escapeHtml(c.creator || '未知作者') + '</div>' +
+          '<div class="source-line"><span>' + escapeHtml(sourceLabel) + '</span></div>' +
+          '<div>授權：' + licenseHtml + '</div>' +
+          sourcePageHtml +
+        '</div>' +
+      '</div>';
+  }
+
+  function bindCandidateCardEvents() {
+    var cards = el.candidateGrid.querySelectorAll('.candidate-card');
+    cards.forEach(function (card) {
+      card.addEventListener('click', function () {
+        var id = card.getAttribute('data-id');
+        toggleSelection(id);
+      });
+    });
+  }
+
+  function toggleSelection(id) {
+    var idx = state.selectedOrder.indexOf(id);
+    if (idx === -1) {
+      state.selectedOrder.push(id);
+    } else {
+      state.selectedOrder.splice(idx, 1);
+    }
+    renderCandidates();
+  }
+
+  function updateSelectionSummary() {
+    if (!state.selectedOrder.length) {
+      el.selectionSummary.innerHTML = '尚未選取任何圖片。可勾選一張以上，第 1 張選定的圖片將作為精選圖片；不選圖可直接按「跳過配圖並送出」。';
+      return;
+    }
+    el.selectionSummary.innerHTML = '已選取 <strong>' + state.selectedOrder.length + '</strong> 張圖片，' +
+      '第 1 張（精選圖片）將用於文章封面。';
+  }
+
+  // ---------------- 重新搜尋 ----------------
+
+  el.btnResearch.addEventListener('click', function () {
+    var keyword = el.researchKeyword.value.trim();
+    clearAlert(el.researchAlert);
+
+    if (!keyword) {
+      setAlert(el.researchAlert, '請輸入重新搜尋的關鍵字。', 'error');
+      return;
+    }
+    if (!state.taskId) {
+      setAlert(el.researchAlert, '任務資訊遺失，請返回重新送出文章。', 'error');
+      return;
+    }
+
+    el.btnResearch.disabled = true;
+    el.researchKeyword.disabled = true;
+    el.researchLoading.classList.remove('hidden');
+
+    apiFetch('/api/research', { method: 'POST', body: { taskId: state.taskId, keyword: keyword } })
+      .then(function (data) {
+        state.candidates = Array.isArray(data.candidates) ? data.candidates : [];
+        renderSourceStatus(data.sourceStatus || null);
+        renderCandidates();
+      })
+      .catch(function (err) {
+        setAlert(el.researchAlert, err.message || '重新搜尋失敗，請重試。', 'error');
+      })
+      .then(function () {
+        el.btnResearch.disabled = false;
+        el.researchKeyword.disabled = false;
+        el.researchLoading.classList.add('hidden');
+      });
+  });
+
+  el.btnBackCompose.addEventListener('click', function () {
+    showView('viewCompose');
+  });
+
+  // ---------------- 送出上稿 ----------------
+
+  function doPublish(selectedIds) {
+    if (!state.taskId) {
+      setAlert(el.researchAlert, '任務資訊遺失，請返回重新送出文章。', 'error');
+      return;
+    }
+
+    el.btnPublish.disabled = true;
+    el.btnSkip.disabled = true;
+    el.publishLoading.classList.remove('hidden');
+    clearAlert(el.researchAlert);
+
+    apiFetch('/api/publish', { method: 'POST', body: { taskId: state.taskId, selectedIds: selectedIds } })
+      .then(function (data) {
+        renderResult(data);
+        showView('viewResult');
+      })
+      .catch(function (err) {
+        setAlert(el.researchAlert, err.message || '上稿流程發生未預期錯誤，請重試。', 'error');
+      })
+      .then(function () {
+        el.btnPublish.disabled = false;
+        el.btnSkip.disabled = false;
+        el.publishLoading.classList.add('hidden');
+      });
+  }
+
+  el.btnPublish.addEventListener('click', function () {
+    doPublish(state.selectedOrder.slice());
+  });
+
+  el.btnSkip.addEventListener('click', function () {
+    doPublish([]);
+  });
+
+  // ---------------- 結果畫面 ----------------
+
+  var STEP_META = {
+    images: { title: '圖片下載', icon: { ok: '✅', error: '❌', skipped: '⏭' } },
+    wordpress: { title: 'WordPress 草稿', icon: { ok: '✅', error: '❌', skipped: '⏭' } },
+    drive: { title: 'Google Drive 存檔', icon: { ok: '✅', error: '❌', skipped: '⏭' } },
+    sheets: { title: 'Google Sheets 記錄', icon: { ok: '✅', error: '❌', skipped: '⏭' } }
+  };
+
+  function renderResult(data) {
+    var steps = data.steps || {};
+    var allOk = data.ok === true;
+
+    if (allOk) {
+      el.resultBanner.textContent = '上稿完成。';
+      el.resultBanner.style.color = 'var(--color-success)';
+    } else {
+      var anyOk = Object.keys(steps).some(function (k) { return steps[k] && steps[k].status === 'ok'; });
+      el.resultBanner.textContent = anyOk ? '部分完成，請確認以下失敗項目。' : '上稿失敗，請確認以下錯誤訊息。';
+      el.resultBanner.style.color = anyOk ? 'var(--color-warning)' : 'var(--color-error)';
+    }
+
+    // 連結區
+    var linksHtml = '';
+    if (steps.wordpress && steps.wordpress.status === 'ok' && steps.wordpress.draftEditUrl) {
+      linksHtml += '<a class="btn" target="_blank" rel="noopener" href="' + escapeHtml(steps.wordpress.draftEditUrl) + '">開啟 WordPress 草稿</a>';
+    }
+    if (steps.drive && steps.drive.status === 'ok' && steps.drive.folderUrl) {
+      linksHtml += '<a class="btn btn-secondary" target="_blank" rel="noopener" href="' + escapeHtml(steps.drive.folderUrl) + '">開啟 Drive 資料夾</a>';
+    }
+    el.resultLinks.innerHTML = linksHtml;
+
+    // 步驟列表
+    var order = ['images', 'wordpress', 'drive', 'sheets'];
+    var html = '';
+    order.forEach(function (key) {
+      var step = steps[key];
+      var meta = STEP_META[key];
+      if (!step || !meta) return;
+      var status = step.status || 'error';
+      var icon = meta.icon[status] || '❓';
+      var message = step.message || '';
+      if (key === 'images' && typeof step.downloaded === 'number') {
+        message = (message ? message + '　' : '') + '已下載 ' + step.downloaded + ' 張圖片。';
+      }
+      html += '' +
+        '<div class="step-item status-' + escapeHtml(status) + '">' +
+          '<div class="step-icon">' + icon + '</div>' +
+          '<div class="step-body">' +
+            '<div class="step-title">' + escapeHtml(meta.title) + '</div>' +
+            '<div class="step-message">' + escapeHtml(message || '（無訊息）') + '</div>' +
+          '</div>' +
+        '</div>';
+    });
+    el.stepList.innerHTML = html;
+  }
+
+  el.btnNextArticle.addEventListener('click', function () {
+    resetComposeState();
+    clearAlert(el.researchAlert);
+    el.researchKeyword.value = '';
+    showView('viewCompose');
+  });
+
+  // ---------------- 啟動 ----------------
+  checkSession();
+})();
+</script>
+
+</body>
+</html>
