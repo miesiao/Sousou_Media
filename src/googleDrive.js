@@ -53,9 +53,21 @@ function sanitizeTitle(title) {
 
 /**
  * 取得 Drive API client。
+ * 若 .env 有 GOOGLE_OAUTH_REFRESH_TOKEN 則用個人帳號 OAuth2（有 Drive 配額）；
+ * 否則 fallback 到 Service Account（個人帳號需前者才能上傳檔案）。
  * @returns {import('googleapis').drive_v3.Drive}
  */
 function getDriveClient() {
+  const clientId = process.env.GOOGLE_OAUTH_CLIENT_ID;
+  const clientSecret = process.env.GOOGLE_OAUTH_CLIENT_SECRET;
+  const refreshToken = process.env.GOOGLE_OAUTH_REFRESH_TOKEN;
+
+  if (clientId && clientSecret && refreshToken) {
+    const oauth2 = new google.auth.OAuth2(clientId, clientSecret);
+    oauth2.setCredentials({ refresh_token: refreshToken });
+    return google.drive({ version: 'v3', auth: oauth2 });
+  }
+
   const auth = getAuthClient();
   return google.drive({ version: 'v3', auth });
 }
@@ -103,6 +115,7 @@ async function createArticleFolder(title, dateStr) {
   try {
     response = await drive.files.create(
       {
+        supportsAllDrives: true,
         requestBody: {
           name: folderName,
           mimeType: 'application/vnd.google-apps.folder',
@@ -146,6 +159,7 @@ async function uploadFile(folderId, name, content, mimeType) {
   try {
     response = await drive.files.create(
       {
+        supportsAllDrives: true,
         requestBody: {
           name,
           parents: [folderId],
