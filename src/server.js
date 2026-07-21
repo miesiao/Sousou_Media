@@ -90,19 +90,35 @@ app.get('/api/session', (req, res) => {
 // 以下所有路由皆需登入。
 app.use('/api', requireAuth);
 
-// POST /api/submit — 送出文章：建 task → 抽關鍵字 → 搜圖。
+// POST /api/submit — 送出文章：建 task → AI 判斷標題+抽關鍵字 → 搜圖。
 app.post('/api/submit', async (req, res) => {
-  const { title, markdown } = req.body || {};
+  const { content } = req.body || {};
 
-  if (!title || typeof title !== 'string' || title.trim() === '') {
-    return res.status(400).json({ error: '缺少文章標題' });
-  }
-  if (!markdown || typeof markdown !== 'string' || markdown.trim() === '') {
-    return res.status(400).json({ error: '缺少文章內容(Markdown)' });
+  if (!content || typeof content !== 'string' || content.trim() === '') {
+    return res.status(400).json({ error: '缺少文章內容' });
   }
 
-  // 1. 建立 task。
   const taskId = crypto.randomUUID();
+
+  // 1. AI 判斷標題 + 抽關鍵字(失敗不讓整個請求失敗，改用備援標題判斷)。
+  const { analyzeArticle, fallbackTitle, stripTitleFromContent } = require('./keywords');
+  let title = '';
+  let keywords = [];
+  let keywordError = null;
+  try {
+    const result = await analyzeArticle(content);
+    title = result.title;
+    keywords = Array.isArray(result.keywords) ? result.keywords : [];
+  } catch (err) {
+    console.error('[submit] AI 文章分析失敗：', err && err.message);
+    keywordError = err && err.message ? err.message : 'AI 文章分析失敗';
+    title = fallbackTitle(content);
+  }
+
+  // 2. 從內文移除與標題相同的那一行，避免標題重複出現。
+  const markdown = stripTitleFromContent(content, title);
+
+  // 3. 建立 task。
   const task = {
     title,
     markdown,
@@ -111,20 +127,7 @@ app.post('/api/submit', async (req, res) => {
   };
   tasks.set(taskId, task);
 
-  // 2. 抽關鍵字(失敗不讓整個請求失敗)。
-  let keywords = [];
-  let keywordError = null;
-  try {
-    const { extractKeywords } = require('./keywords');
-    const result = await extractKeywords(title, markdown);
-    keywords = (result && Array.isArray(result.keywords)) ? result.keywords : [];
-  } catch (err) {
-    console.error('[submit] 關鍵字抽取失敗：', err && err.message);
-    keywords = [];
-    keywordError = err && err.message ? err.message : '關鍵字抽取失敗';
-  }
-
-  // 3. 有關鍵字才搜圖。
+  // 4. 有關鍵字才搜圖。
   let candidates = [];
   let sourceStatus = null;
   if (keywords.length > 0) {
@@ -143,9 +146,10 @@ app.post('/api/submit', async (req, res) => {
     }
   }
 
-  // 4. 回傳。
+  // 5. 回傳。
   return res.json({
     taskId,
+    title,
     keywords,
     keywordError: keywordError || null,
     candidates,

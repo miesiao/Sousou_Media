@@ -1,8 +1,8 @@
 'use strict';
 
 // 隅消息上稿系統 — Google Drive 整合
-// 規格第 7.2 節：每篇文章在 DRIVE_ROOT_FOLDER_ID 底下建立子資料夾，
-// 資料夾內放文章.md、圖N.jpg、來源.txt（檔案內容由呼叫端組好傳入，本模組只負責建資料夾與上傳）。
+// 文章 Markdown 不建子資料夾，直接把「編號_標題.md」上傳到 DRIVE_ROOT_FOLDER_ID 底下；
+// 配圖則上傳到 DRIVE_ROOT_FOLDER_ID 底下固定的「picture」資料夾，檔名為「編號_序號.副檔名」。
 
 const { google } = require('googleapis');
 const { Readable } = require('stream');
@@ -11,8 +11,11 @@ const { missingAuthEnv, getAuthClient } = require('./googleAuth');
 // 單一 API 呼叫的 timeout（毫秒）。
 const API_TIMEOUT_MS = 30000;
 
-// 資料夾名稱截斷長度（規格：標題過長截斷至 40 字）。
+// 檔名中標題部分的截斷長度。
 const TITLE_MAX_LENGTH = 40;
+
+// 存放所有配圖的固定資料夾名稱（位於 DRIVE_ROOT_FOLDER_ID 底下）。
+const PICTURE_FOLDER_NAME = 'picture';
 
 // 不合法的檔名字元（Windows / Drive 皆不建議使用）。
 const INVALID_CHARS_REGEX = /[/\\:*?"<>|]/g;
@@ -20,8 +23,11 @@ const INVALID_CHARS_REGEX = /[/\\:*?"<>|]/g;
 // eslint-disable-next-line no-control-regex
 const CONTROL_CHARS_REGEX = /[\x00-\x1f]/g;
 
+// 「picture」資料夾 ID 快取，避免每次上稿都重新查詢/建立。
+let cachedPictureFolderId = null;
+
 /**
- * 檢查建立文章資料夾 / 上傳檔案所需的環境變數。
+ * 檢查上傳檔案所需的環境變數。
  * @returns {string[]} 缺少的環境變數名稱陣列
  */
 function missingEnv() {
@@ -95,51 +101,9 @@ function wrapApiError(err, action) {
 }
 
 /**
- * 為文章建立子資料夾（資料夾名稱：YYYY-MM-DD_標題，標題已 sanitize 並截斷）。
- * @param {string} title 文章標題
- * @param {string} dateStr 日期字串（YYYY-MM-DD）
- * @returns {Promise<{ folderId: string, folderUrl: string }>}
- */
-async function createArticleFolder(title, dateStr) {
-  const missing = missingEnv();
-  if (missing.length > 0) {
-    throw new Error(
-      `Google Drive 未設定（缺少 ${missing.join('、')}），無法建立資料夾`
-    );
-  }
-
-  const folderName = `${dateStr}_${sanitizeTitle(title)}`;
-  const drive = getDriveClient();
-
-  let response;
-  try {
-    response = await drive.files.create(
-      {
-        supportsAllDrives: true,
-        requestBody: {
-          name: folderName,
-          mimeType: 'application/vnd.google-apps.folder',
-          parents: [process.env.DRIVE_ROOT_FOLDER_ID],
-        },
-        fields: 'id',
-      },
-      { timeout: API_TIMEOUT_MS }
-    );
-  } catch (err) {
-    throw wrapApiError(err, '建立文章資料夾');
-  }
-
-  const folderId = response.data.id;
-  return {
-    folderId,
-    folderUrl: `https://drive.google.com/drive/folders/${folderId}`,
-  };
-}
-
-/**
  * 上傳檔案到指定資料夾。
  * @param {string} folderId 目標資料夾 ID
- * @param {string} name 檔案名稱（例如 文章.md、圖1.jpg、來源.txt）
+ * @param {string} name 檔案名稱
  * @param {Buffer|string} content 檔案內容
  * @param {string} mimeType 檔案的 MIME type
  * @returns {Promise<{ fileId: string }>}
@@ -179,9 +143,105 @@ async function uploadFile(folderId, name, content, mimeType) {
   return { fileId: response.data.id };
 }
 
+/**
+ * 取得（必要時建立）固定的「picture」資料夾 ID，位於 DRIVE_ROOT_FOLDER_ID 底下。
+ * 找過一次後快取在記憶體中，同一次程式執行期間不會重複查詢。
+ * @returns {Promise<string>}
+ */
+async function getPictureFolderId() {
+  const missing = missingEnv();
+  if (missing.length > 0) {
+    throw new Error(
+      `Google Drive 未設定（缺少 ${missing.join('、')}），無法取得 picture 資料夾`
+    );
+  }
+
+  if (cachedPictureFolderId) {
+    return cachedPictureFolderId;
+  }
+
+  const drive = getDriveClient();
+  const rootFolderId = process.env.DRIVE_ROOT_FOLDER_ID;
+
+  let listResponse;
+  try {
+    listResponse = await drive.files.list(
+      {
+        q: `name = '${PICTURE_FOLDER_NAME}' and mimeType = 'application/vnd.google-apps.folder' and '${rootFolderId}' in parents and trashed = false`,
+        fields: 'files(id)',
+        supportsAllDrives: true,
+        includeItemsFromAllDrives: true,
+      },
+      { timeout: API_TIMEOUT_MS }
+    );
+  } catch (err) {
+    throw wrapApiError(err, '查詢 picture 資料夾');
+  }
+
+  const existing = listResponse.data.files && listResponse.data.files[0];
+  if (existing && existing.id) {
+    cachedPictureFolderId = existing.id;
+    return cachedPictureFolderId;
+  }
+
+  let createResponse;
+  try {
+    createResponse = await drive.files.create(
+      {
+        supportsAllDrives: true,
+        requestBody: {
+          name: PICTURE_FOLDER_NAME,
+          mimeType: 'application/vnd.google-apps.folder',
+          parents: [rootFolderId],
+        },
+        fields: 'id',
+      },
+      { timeout: API_TIMEOUT_MS }
+    );
+  } catch (err) {
+    throw wrapApiError(err, '建立 picture 資料夾');
+  }
+
+  cachedPictureFolderId = createResponse.data.id;
+  return cachedPictureFolderId;
+}
+
+/**
+ * 把文章 Markdown 直接上傳到 DRIVE_ROOT_FOLDER_ID 底下（不建子資料夾），
+ * 檔名為「編號_標題.md」（標題已 sanitize 並截斷）。
+ * @param {object} params
+ * @param {number} params.number 文章編號
+ * @param {string} params.title 文章標題
+ * @param {string} params.content 文章 Markdown 內容
+ * @returns {Promise<{ fileId: string, fileUrl: string, filename: string }>}
+ */
+async function uploadArticleMarkdown({ number, title, content }) {
+  const missing = missingEnv();
+  if (missing.length > 0) {
+    throw new Error(
+      `Google Drive 未設定（缺少 ${missing.join('、')}），無法上傳文章檔案`
+    );
+  }
+
+  const filename = `${number}_${sanitizeTitle(title)}.md`;
+  const { fileId } = await uploadFile(
+    process.env.DRIVE_ROOT_FOLDER_ID,
+    filename,
+    content,
+    'text/markdown'
+  );
+
+  return {
+    fileId,
+    fileUrl: `https://drive.google.com/file/d/${fileId}/view`,
+    filename,
+  };
+}
+
 module.exports = {
   missingEnv,
   sanitizeTitle,
-  createArticleFolder,
   uploadFile,
+  uploadArticleMarkdown,
+  getPictureFolderId,
 };

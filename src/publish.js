@@ -1,8 +1,8 @@
 'use strict';
 
 // 隅消息上稿系統 — 上稿 orchestration
-// 規格第 9 節：三個最終寫入動作(WordPress → Drive → Sheets)依序執行，
-// 任一失敗要明確回報到哪一步，並保留已成功的部分(不自動回滾，讓人工補救)。
+// 依序執行：下載選定配圖 → WordPress 草稿 → 取得文章編號(讀 Sheets) → Drive 存檔(.md) → Sheets 記錄一列。
+// 任一步失敗要明確回報到哪一步，並保留已成功的部分(不自動回滾，讓人工補救)。
 // 每一步動作前先用該模組 missingEnv() 檢查，缺變數時在「動作發生前」就標記該步失敗。
 
 const { marked } = require('marked');
@@ -68,15 +68,6 @@ function escapeHtml(str) {
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;');
-}
-
-/**
- * 取得該圖的稱謂：pexels/unsplash 用「攝影師」，其他(wikimedia/openverse)用「作者」。
- * @param {string} source
- * @returns {string}
- */
-function creatorLabel(source) {
-  return source === 'pexels' || source === 'unsplash' ? '攝影師' : '作者';
 }
 
 // content-type → 副檔名對照，找不到時預設 jpg。
@@ -242,7 +233,7 @@ async function stepWordpress(task, images) {
 }
 
 /**
- * 組出「文章.md」內容：開頭確保有 # {title} 的 H1(已有相同標題則不重複)。
+ * 組出上傳到 Drive 的文章 Markdown 內容：開頭確保有 # {title} 的 H1(已有相同標題則不重複)。
  * @param {object} task
  * @returns {string}
  */
@@ -258,125 +249,101 @@ function buildArticleMarkdown(task) {
 }
 
 /**
- * 組出「來源.txt」內容。
- * @param {Array} images
- * @returns {string}
+ * 步驟：Google Drive 存檔。
+ * 文章 Markdown 直接上傳到根資料夾(不建子資料夾)，檔名為「編號_標題.md」；
+ * 配圖(若有選圖且成功下載)上傳到固定的「picture」資料夾，檔名為「編號_序號.副檔名」
+ * (序號與選取順序一致，第 1 張即 WordPress 的精選圖片)。
+ * @param {object} task
+ * @param {Array} images 已下載的配圖(順序即選取順序)
+ * @param {number} number 文章編號(與 Sheets 那一列共用同一個編號)
+ * @returns {Promise<object>} drive step 結果 + 內部 fileUrl
  */
-function buildSourceText(images) {
-  const blocks = images.map((img, index) => {
-    const c = img.candidate;
-    const n = index + 1;
-    const label = creatorLabel(c.source);
-    const licenseLine = c.licenseUrl
-      ? `授權：${c.license}（${c.licenseUrl}）`
-      : `授權：${c.license}`;
-
-    const lines = [
-      `圖${n}.${extFromContentType(img.contentType)}`,
-      `${label}：${c.creator}`,
-      `來源：${c.sourcePageUrl || '（無來源頁網址）'}`,
-      licenseLine,
-      `標註：${c.attribution}`,
-    ];
-
-    // wikimedia / openverse 的 CC 授權圖，段落末加社群使用提醒。
-    if (c.source === 'wikimedia' || c.source === 'openverse') {
-      lines.push('※ 社群使用時必須標註作者與授權');
-    }
-
-    return lines.join('\n');
-  });
-
-  // 段落間空一行。
-  return blocks.join('\n\n');
-}
-
-/**
- * 步驟 3：Google Drive 存檔(建資料夾、上傳 文章.md、圖片、來源.txt)。
- * @returns {Promise<object>} drive step 結果 + 內部 folderUrl
- */
-async function stepDrive(task, images) {
+async function stepDrive(task, images, number) {
   const miss = googleDrive.missingEnv();
   if (miss.length > 0) {
     const message = `Google Drive 未設定(缺少 ${miss.join('、')})，已略過此步驟`;
     console.error('[publish] ' + message);
-    return { status: 'error', message, folderUrl: '' };
+    return { status: 'error', message, fileUrl: '' };
   }
 
+  const fileErrors = [];
+  let fileUrl = '';
+  let articleFilename = '';
+
+  // 文章 Markdown。
   try {
-    const { dash } = getTodayStrings();
-    const folder = await withTimeout(
-      googleDrive.createArticleFolder(task.title, dash),
+    const uploaded = await withTimeout(
+      googleDrive.uploadArticleMarkdown({
+        number,
+        title: task.title,
+        content: buildArticleMarkdown(task),
+      }),
       EXTERNAL_CALL_TIMEOUT_MS,
-      'Google Drive 建立資料夾'
+      'Google Drive 上傳文章檔案'
     );
-
-    const fileErrors = [];
-
-    // 文章.md
-    try {
-      await withTimeout(
-        googleDrive.uploadFile(folder.folderId, '文章.md', buildArticleMarkdown(task), 'text/markdown'),
-        EXTERNAL_CALL_TIMEOUT_MS,
-        'Google Drive 上傳 文章.md'
-      );
-    } catch (err) {
-      console.error('[publish] Drive 上傳 文章.md 失敗：', err && err.message);
-      fileErrors.push(`文章.md：${err && err.message}`);
-    }
-
-    // 圖片(每張成功下載的圖)
-    for (let i = 0; i < images.length; i += 1) {
-      const name = `圖${i + 1}.${extFromContentType(images[i].contentType)}`;
-      const mimeType = images[i].contentType || 'image/jpeg';
-      try {
-        await withTimeout(
-          googleDrive.uploadFile(folder.folderId, name, images[i].buffer, mimeType),
-          EXTERNAL_CALL_TIMEOUT_MS,
-          `Google Drive 上傳 ${name}`
-        );
-      } catch (err) {
-        console.error(`[publish] Drive 上傳 ${name} 失敗：`, err && err.message);
-        fileErrors.push(`${name}：${err && err.message}`);
-      }
-    }
-
-    // 來源.txt(有選圖才建)
-    if (images.length > 0) {
-      try {
-        await withTimeout(
-          googleDrive.uploadFile(folder.folderId, '來源.txt', buildSourceText(images), 'text/plain'),
-          EXTERNAL_CALL_TIMEOUT_MS,
-          'Google Drive 上傳 來源.txt'
-        );
-      } catch (err) {
-        console.error('[publish] Drive 上傳 來源.txt 失敗：', err && err.message);
-        fileErrors.push(`來源.txt：${err && err.message}`);
-      }
-    }
-
-    if (fileErrors.length > 0) {
-      const message = `Google Drive 資料夾已建立，但部分檔案上傳失敗：${fileErrors.join('；')}`;
-      return { status: 'error', message, folderUrl: folder.folderUrl || '' };
-    }
-
-    return {
-      status: 'ok',
-      message: '已存檔到 Google Drive',
-      folderUrl: folder.folderUrl || '',
-    };
+    fileUrl = uploaded.fileUrl || '';
+    articleFilename = uploaded.filename || '';
   } catch (err) {
-    const message = `Google Drive 存檔失敗：${err && err.message}`;
-    console.error('[publish] ' + message);
-    return { status: 'error', message, folderUrl: '' };
+    console.error('[publish] Drive 上傳文章檔案失敗：', err && err.message);
+    fileErrors.push(`文章檔案：${err && err.message}`);
   }
+
+  // 配圖(有選圖才上傳)：picture 資料夾內，檔名「編號_序號.副檔名」。
+  let uploadedImageCount = 0;
+  if (images.length > 0) {
+    try {
+      const pictureFolderId = await withTimeout(
+        googleDrive.getPictureFolderId(),
+        EXTERNAL_CALL_TIMEOUT_MS,
+        'Google Drive 取得 picture 資料夾'
+      );
+
+      for (let i = 0; i < images.length; i += 1) {
+        const name = `${number}_${i + 1}.${extFromContentType(images[i].contentType)}`;
+        try {
+          await withTimeout(
+            googleDrive.uploadFile(
+              pictureFolderId,
+              name,
+              images[i].buffer,
+              images[i].contentType || 'image/jpeg'
+            ),
+            EXTERNAL_CALL_TIMEOUT_MS,
+            `Google Drive 上傳 ${name}`
+          );
+          uploadedImageCount += 1;
+        } catch (err) {
+          console.error(`[publish] Drive 上傳 ${name} 失敗：`, err && err.message);
+          fileErrors.push(`${name}：${err && err.message}`);
+        }
+      }
+    } catch (err) {
+      console.error('[publish] Drive 取得 picture 資料夾失敗：', err && err.message);
+      fileErrors.push(`picture 資料夾：${err && err.message}`);
+    }
+  }
+
+  if (fileErrors.length > 0) {
+    const message = articleFilename
+      ? `已存檔到 Google Drive(${articleFilename})，但部分檔案上傳失敗：${fileErrors.join('；')}`
+      : `Google Drive 存檔失敗：${fileErrors.join('；')}`;
+    return { status: 'error', message, fileUrl };
+  }
+
+  let message = `已存檔到 Google Drive(${articleFilename})`;
+  if (uploadedImageCount > 0) {
+    message += `，並上傳 ${uploadedImageCount} 張圖片到 picture 資料夾`;
+  }
+  return { status: 'ok', message, fileUrl };
 }
 
 /**
- * 步驟 4：Google Sheets 記錄一列。
+ * 步驟：Google Sheets 記錄一列(編號、日期、上稿狀態、題目)。
+ * @param {object} task
+ * @param {number} number 文章編號(與 Drive 檔名共用同一個編號)
  * @returns {Promise<object>} sheets step 結果
  */
-async function stepSheets(task, wpEditUrl, driveFolderUrl) {
+async function stepSheets(task, number) {
   const miss = sheets.missingEnv();
   if (miss.length > 0) {
     const message = `Google Sheets 未設定(缺少 ${miss.join('、')})，已略過此步驟`;
@@ -387,16 +354,11 @@ async function stepSheets(task, wpEditUrl, driveFolderUrl) {
   try {
     const { dash } = getTodayStrings();
     await withTimeout(
-      sheets.appendRow({
-        date: dash,
-        title: task.title,
-        wpDraftUrl: wpEditUrl || '',
-        driveFolderUrl: driveFolderUrl || '',
-      }),
+      sheets.appendRow({ number, date: dash, title: task.title }),
       EXTERNAL_CALL_TIMEOUT_MS,
       'Google Sheets 記錄'
     );
-    return { status: 'ok', message: '已記錄到 Google Sheets' };
+    return { status: 'ok', message: `已記錄到 Google Sheets(編號 ${number})` };
   } catch (err) {
     const message = `Google Sheets 記錄失敗：${err && err.message}`;
     console.error('[publish] ' + message);
@@ -405,8 +367,10 @@ async function stepSheets(task, wpEditUrl, driveFolderUrl) {
 }
 
 /**
- * 上稿主流程。依序執行下載配圖 → WordPress → Drive → Sheets，
+ * 上稿主流程。依序執行下載配圖 → WordPress → 取得文章編號 → Drive → Sheets，
  * 保留已成功部分，回報每一步的狀態(不自動回滾)。
+ * Drive 檔名與 Sheets 列使用同一個文章編號(來自 Sheets 目前最大編號 + 1)，
+ * 因此編號一定要先取得成功，Drive／Sheets 兩步才會執行。
  * @param {object} task { title, markdown, candidates }
  * @param {string[]} selectedIds 選取的圖片 id(順序即排序，第一張為 featured)
  * @returns {Promise<object>} 與前端契約一致的結果物件
@@ -447,11 +411,34 @@ async function publishArticle(task, selectedIds) {
   // ---- 步驟 2：WordPress ----
   const wp = await stepWordpress(task, images);
 
-  // ---- 步驟 3：Google Drive ----
-  const drive = await stepDrive(task, images);
+  // ---- 步驟 3：取得文章編號(Drive 檔名與 Sheets 列共用) ----
+  const sheetsMiss = sheets.missingEnv();
+  let articleNumber = null;
+  let numberErrorMessage = null;
+  if (sheetsMiss.length > 0) {
+    numberErrorMessage = `Google Sheets 未設定(缺少 ${sheetsMiss.join('、')})，無法取得文章編號`;
+  } else {
+    try {
+      articleNumber = await withTimeout(
+        sheets.getNextArticleNumber(),
+        EXTERNAL_CALL_TIMEOUT_MS,
+        'Google Sheets 讀取文章編號'
+      );
+    } catch (err) {
+      numberErrorMessage = `取得文章編號失敗：${err && err.message}`;
+      console.error('[publish] ' + numberErrorMessage);
+    }
+  }
 
-  // ---- 步驟 4：Google Sheets ----
-  const sheetsResult = await stepSheets(task, wp.editUrl, drive.folderUrl);
+  // ---- 步驟 4：Google Drive ----
+  const drive = articleNumber !== null
+    ? await stepDrive(task, images, articleNumber)
+    : { status: 'error', message: `${numberErrorMessage}，已略過 Drive 存檔`, fileUrl: '' };
+
+  // ---- 步驟 5：Google Sheets ----
+  const sheetsResult = articleNumber !== null
+    ? await stepSheets(task, articleNumber)
+    : { status: 'error', message: numberErrorMessage || 'Google Sheets 未設定，已略過此步驟' };
 
   const steps = {
     images: imagesStep,
@@ -464,7 +451,7 @@ async function publishArticle(task, selectedIds) {
     drive: {
       status: drive.status,
       message: drive.message,
-      folderUrl: drive.folderUrl,
+      fileUrl: drive.fileUrl,
     },
     sheets: {
       status: sheetsResult.status,
@@ -472,7 +459,7 @@ async function publishArticle(task, selectedIds) {
     },
   };
 
-  // 四步皆 ok 或 skipped 才算整體成功。
+  // 五步皆 ok 或 skipped 才算整體成功。
   const ok = Object.values(steps).every(
     (step) => step.status === 'ok' || step.status === 'skipped'
   );

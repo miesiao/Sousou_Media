@@ -1,8 +1,8 @@
 'use strict';
 
 // 隅消息上稿系統 — Google Sheets 整合
-// 規格第 7.3 節：SHEET_ID 指向的試算表，欄位 A–G。
-// 後端只 append 新列並填 A–E（F 社群狀態、G 備註留空給後續流程使用）。
+// 試算表欄位 A–D：編號、日期、上稿狀態、題目。編號由目前試算表最大編號 + 1 決定，
+// 上稿狀態固定寫「草稿」。
 
 const { google } = require('googleapis');
 const { missingAuthEnv, getAuthClient } = require('./googleAuth');
@@ -58,15 +58,53 @@ function wrapApiError(err, action) {
 }
 
 /**
- * 在試算表新增一列紀錄，填入 A–E（發佈狀態固定寫「草稿」），F、G 留空。
+ * 讀取欄位 A（編號）目前最大值，回傳下一個可用編號（最大值 + 1；試算表無資料列時回傳 1）。
+ * @returns {Promise<number>}
+ */
+async function getNextArticleNumber() {
+  const missing = missingEnv();
+  if (missing.length > 0) {
+    throw new Error(
+      `Google Sheets 未設定（缺少 ${missing.join('、')}），無法取得文章編號`
+    );
+  }
+
+  const sheets = getSheetsClient();
+
+  let response;
+  try {
+    response = await sheets.spreadsheets.values.get(
+      {
+        spreadsheetId: process.env.SHEET_ID,
+        range: 'A2:A',
+      },
+      { timeout: API_TIMEOUT_MS }
+    );
+  } catch (err) {
+    throw wrapApiError(err, '讀取目前文章編號');
+  }
+
+  const rows = response.data.values || [];
+  let maxNumber = 0;
+  for (const row of rows) {
+    const n = parseInt(row[0], 10);
+    if (Number.isFinite(n) && n > maxNumber) {
+      maxNumber = n;
+    }
+  }
+
+  return maxNumber + 1;
+}
+
+/**
+ * 在試算表新增一列紀錄：編號、日期、上稿狀態（固定「草稿」）、題目。
  * @param {object} params
+ * @param {number} params.number 文章編號
  * @param {string} params.date 日期（YYYY-MM-DD）
  * @param {string} params.title 文章標題
- * @param {string} params.wpDraftUrl WordPress 草稿連結
- * @param {string} params.driveFolderUrl Drive 資料夾連結
  * @returns {Promise<void>}
  */
-async function appendRow({ date, title, wpDraftUrl, driveFolderUrl }) {
+async function appendRow({ number, date, title }) {
   const missing = missingEnv();
   if (missing.length > 0) {
     throw new Error(
@@ -80,11 +118,11 @@ async function appendRow({ date, title, wpDraftUrl, driveFolderUrl }) {
     await sheets.spreadsheets.values.append(
       {
         spreadsheetId: process.env.SHEET_ID,
-        range: 'A:G',
+        range: 'A:D',
         valueInputOption: 'RAW',
         insertDataOption: 'INSERT_ROWS',
         requestBody: {
-          values: [[date, title, wpDraftUrl, driveFolderUrl, '草稿', '', '']],
+          values: [[number, date, '草稿', title]],
         },
       },
       { timeout: API_TIMEOUT_MS }
@@ -96,5 +134,6 @@ async function appendRow({ date, title, wpDraftUrl, driveFolderUrl }) {
 
 module.exports = {
   missingEnv,
+  getNextArticleNumber,
   appendRow,
 };

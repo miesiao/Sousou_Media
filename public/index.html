@@ -433,6 +433,13 @@
     margin-top: 4px;
   }
 
+  .detected-title-text {
+    font-size: 15px;
+    font-weight: 600;
+    color: var(--color-text);
+    margin-top: 4px;
+  }
+
   footer.app-footer {
     text-align: center;
     color: var(--color-text-muted);
@@ -473,12 +480,8 @@
     <div id="compose-alert"></div>
     <form id="compose-form">
       <div class="field">
-        <label for="compose-title">文章標題</label>
-        <input type="text" id="compose-title" placeholder="輸入文章標題" />
-      </div>
-      <div class="field">
-        <label for="compose-markdown">文章內文（Markdown）</label>
-        <textarea id="compose-markdown" placeholder="貼上文章 Markdown 內文…"></textarea>
+        <label for="compose-content">文章內容</label>
+        <textarea id="compose-content" placeholder="貼上文章全部內容（含標題），AI 會自動判斷標題與搜圖關鍵字…"></textarea>
       </div>
       <div class="btn-row">
         <button type="submit" class="btn" id="btn-submit">送出並搜圖</button>
@@ -493,6 +496,11 @@
   <!-- ========== 挑圖畫面 ========== -->
   <section id="view-pick" class="card hidden">
     <h2 class="section-title">選擇配圖</h2>
+
+    <div id="title-block" class="field">
+      <label>AI 偵測到的標題</label>
+      <div id="detected-title" class="helper-text"></div>
+    </div>
 
     <div id="keyword-block" class="field">
       <label>自動抽取的關鍵字</label>
@@ -566,6 +574,7 @@
   // ---------------- 全域狀態 ----------------
   var state = {
     taskId: null,
+    title: '',                // AI 判斷出的文章標題(唯讀顯示用)
     candidates: [],           // 目前候選圖清單
     selectedOrder: [],        // 已選圖片 id，依選取順序
   };
@@ -582,13 +591,13 @@
 
     viewCompose: document.getElementById('view-compose'),
     composeForm: document.getElementById('compose-form'),
-    composeTitle: document.getElementById('compose-title'),
-    composeMarkdown: document.getElementById('compose-markdown'),
+    composeContent: document.getElementById('compose-content'),
     composeAlert: document.getElementById('compose-alert'),
     composeLoading: document.getElementById('compose-loading'),
     btnSubmit: document.getElementById('btn-submit'),
 
     viewPick: document.getElementById('view-pick'),
+    detectedTitle: document.getElementById('detected-title'),
     keywordChips: document.getElementById('keyword-chips'),
     keywordError: document.getElementById('keyword-error'),
     sourceStatusRow: document.getElementById('source-status-row'),
@@ -744,10 +753,10 @@
   // ---------------- 貼稿流程 ----------------
 
   function resetComposeState() {
-    el.composeTitle.value = '';
-    el.composeMarkdown.value = '';
+    el.composeContent.value = '';
     clearAlert(el.composeAlert);
     state.taskId = null;
+    state.title = '';
     state.candidates = [];
     state.selectedOrder = [];
   }
@@ -756,26 +765,25 @@
     evt.preventDefault();
     clearAlert(el.composeAlert);
 
-    var title = el.composeTitle.value.trim();
-    var markdown = el.composeMarkdown.value.trim();
+    var content = el.composeContent.value.trim();
 
-    if (!title) {
-      setAlert(el.composeAlert, '請輸入文章標題。', 'error');
-      return;
-    }
-    if (!markdown) {
-      setAlert(el.composeAlert, '請貼上文章內文。', 'error');
+    if (!content) {
+      setAlert(el.composeAlert, '請貼上文章內容。', 'error');
       return;
     }
 
     el.btnSubmit.disabled = true;
     el.composeLoading.classList.remove('hidden');
 
-    apiFetch('/api/submit', { method: 'POST', body: { title: title, markdown: markdown } })
+    apiFetch('/api/submit', { method: 'POST', body: { content: content } })
       .then(function (data) {
         state.taskId = data.taskId;
+        state.title = data.title || '';
         state.candidates = Array.isArray(data.candidates) ? data.candidates : [];
         state.selectedOrder = [];
+
+        el.detectedTitle.textContent = state.title || '（未偵測到標題）';
+        el.detectedTitle.className = state.title ? 'detected-title-text' : 'helper-text';
 
         renderKeywords(data.keywords || [], data.keywordError || null);
         renderSourceStatus(data.sourceStatus || null);
@@ -1029,8 +1037,8 @@
     if (steps.wordpress && steps.wordpress.status === 'ok' && steps.wordpress.draftEditUrl) {
       linksHtml += '<a class="btn" target="_blank" rel="noopener" href="' + escapeHtml(steps.wordpress.draftEditUrl) + '">開啟 WordPress 草稿</a>';
     }
-    if (steps.drive && steps.drive.status === 'ok' && steps.drive.folderUrl) {
-      linksHtml += '<a class="btn btn-secondary" target="_blank" rel="noopener" href="' + escapeHtml(steps.drive.folderUrl) + '">開啟 Drive 資料夾</a>';
+    if (steps.drive && steps.drive.status === 'ok' && steps.drive.fileUrl) {
+      linksHtml += '<a class="btn btn-secondary" target="_blank" rel="noopener" href="' + escapeHtml(steps.drive.fileUrl) + '">開啟 Drive 文件</a>';
     }
     el.resultLinks.innerHTML = linksHtml;
 
@@ -1061,6 +1069,7 @@
 
   el.btnNextArticle.addEventListener('click', function () {
     resetComposeState();
+    el.detectedTitle.textContent = '';
     clearAlert(el.researchAlert);
     el.researchKeyword.value = '';
     showView('viewCompose');
