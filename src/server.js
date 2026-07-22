@@ -200,6 +200,39 @@ app.post('/api/research', async (req, res) => {
   return res.json({ candidates: task.candidates, sourceStatus });
 });
 
+// GET /api/candidates — 讀取「候選題目」分頁(研究段產出，供人工選題)。
+app.get('/api/candidates', async (req, res) => {
+  try {
+    const { listCandidates } = require('./candidates');
+    const items = await listCandidates();
+    return res.json({ items });
+  } catch (err) {
+    console.error('[candidates] 讀取候選題目失敗：', err && err.message);
+    return res.status(500).json({ error: `讀取候選題目失敗：${err && err.message}` });
+  }
+});
+
+// POST /api/candidates/status — 切換單一候選的狀態(待挑選 ↔ 已選)。
+app.post('/api/candidates/status', async (req, res) => {
+  const { rowNumber, status } = req.body || {};
+  const { STATUS_PENDING, STATUS_SELECTED, setCandidateStatus } = require('./candidates');
+
+  if (!Number.isInteger(rowNumber) || rowNumber < 2) {
+    return res.status(400).json({ error: '缺少或無效的 rowNumber' });
+  }
+  if (status !== STATUS_PENDING && status !== STATUS_SELECTED) {
+    return res.status(400).json({ error: '無效的狀態值' });
+  }
+
+  try {
+    await setCandidateStatus(rowNumber, status);
+    return res.json({ ok: true });
+  } catch (err) {
+    console.error('[candidates] 更新候選狀態失敗：', err && err.message);
+    return res.status(500).json({ error: `更新候選狀態失敗：${err && err.message}` });
+  }
+});
+
 // POST /api/publish — 上稿：WP 草稿 + Drive 存檔 + Sheets 記錄。
 app.post('/api/publish', async (req, res) => {
   const { taskId, selectedIds } = req.body || {};

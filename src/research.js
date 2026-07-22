@@ -18,10 +18,12 @@ const { buildResearchPrompt } = require('./prompts/researchPrompt');
 // 想換新版 model，改這一行就好(用 ListModels API 現查過，2026-07-22 時 gemini-2.5-flash
 // 已對新用戶下架，目前最新的正式版 Flash 是 gemini-3.6-flash)。
 const GEMINI_MODEL = 'gemini-3.6-flash';
-const GEMINI_API_TIMEOUT_MS = 60000;
+// 每則要求 300-500 字研究說明 + 跨多語言 grounding 搜尋，單次呼叫較久，故拉長到 3 分鐘。
+const GEMINI_API_TIMEOUT_MS = 180000;
 
 const SHEET_TAB_NAME = '候選題目';
-const SHEET_HEADER = ['日期', '狀態', '題目', '摘要', '關鍵字', '參考連結'];
+const SHEET_HEADER = ['日期', '狀態', '分類', '題目', '研究說明', '主要語言來源', '台灣人興趣觸發點', '參考資料'];
+const SHEET_RANGE = `${SHEET_TAB_NAME}!A:H`;
 const DEFAULT_STATUS = '待挑選';
 
 /**
@@ -124,7 +126,7 @@ async function callGemini(prompt) {
 /**
  * 解析 Gemini 回應文字為候選清單，過濾掉缺少標題或連結的項目。
  * @param {string} rawText
- * @returns {Array<{title: string, summary: string, keywords: string[], sourceUrl: string}>}
+ * @returns {Array<{category: string, title: string, research: string, sourceLanguages: string, taiwanHook: string, sourceUrls: string[]}>}
  */
 function parseCandidates(rawText) {
   const cleaned = stripCodeFence(rawText);
@@ -145,20 +147,23 @@ function parseCandidates(rawText) {
     if (!raw || typeof raw !== 'object') continue;
 
     const title = typeof raw.title === 'string' ? raw.title.trim() : '';
-    const summary = typeof raw.summary === 'string' ? raw.summary.trim() : '';
-    const sourceUrl = typeof raw.sourceUrl === 'string' ? raw.sourceUrl.trim() : '';
+    const category = typeof raw.category === 'string' ? raw.category.trim() : '';
+    const research = typeof raw.research === 'string' ? raw.research.trim() : '';
+    const sourceLanguages =
+      typeof raw.sourceLanguages === 'string' ? raw.sourceLanguages.trim() : '';
+    const taiwanHook = typeof raw.taiwanHook === 'string' ? raw.taiwanHook.trim() : '';
 
-    if (!title || !sourceUrl) {
+    const sourceUrls = Array.isArray(raw.sourceUrls)
+      ? raw.sourceUrls
+          .filter((url) => typeof url === 'string' && url.trim() !== '')
+          .map((url) => url.trim())
+      : [];
+
+    if (!title || sourceUrls.length === 0) {
       continue; // 沒標題或沒連結的候選不收(閘門用途，寧缺勿濫)
     }
 
-    const keywords = Array.isArray(raw.keywords)
-      ? raw.keywords
-          .filter((kw) => typeof kw === 'string' && kw.trim() !== '')
-          .map((kw) => kw.trim())
-      : [];
-
-    items.push({ title, summary, keywords, sourceUrl });
+    items.push({ category, title, research, sourceLanguages, taiwanHook, sourceUrls });
   }
 
   return items;
@@ -174,7 +179,13 @@ function getSheetsClient() {
 }
 
 /**
- * 確保「候選題目」分頁存在；不存在就建立並寫入表頭。
+ * 確保「候選題目」分頁存在，且第一列是正確的表頭。
+ * - 分頁不存在：建立分頁 + 直接寫入表頭。
+ * - 分頁存在但第一列是空的(例如剛被清空)：直接寫入表頭。
+ * - 分頁存在但第一列已經是資料(表頭遺失，例如曾被清空值但沒補表頭)：
+ *   先在最上面插入一列(既有資料整體下移，不覆蓋)，再寫入表頭。
+ * 這裡不能只檢查「分頁存不存在」就跳過，否則表頭遺失時 listCandidates() 的
+ * A2:H 會把第一筆真實候選誤判成表頭、少讀一筆。
  * @param {import('googleapis').sheets_v4.Sheets} sheets
  * @returns {Promise<void>}
  */
@@ -183,23 +194,66 @@ async function ensureResearchTab(sheets) {
     spreadsheetId: process.env.SHEET_ID,
   });
 
-  const exists = (spreadsheet.data.sheets || []).some(
+  const sheetMeta = (spreadsheet.data.sheets || []).find(
     (s) => s.properties && s.properties.title === SHEET_TAB_NAME
   );
-  if (exists) {
+
+  if (!sheetMeta) {
+    await sheets.spreadsheets.batchUpdate({
+      spreadsheetId: process.env.SHEET_ID,
+      requestBody: {
+        requests: [{ addSheet: { properties: { title: SHEET_TAB_NAME } } }],
+      },
+    });
+
+    await sheets.spreadsheets.values.update({
+      spreadsheetId: process.env.SHEET_ID,
+      range: `${SHEET_TAB_NAME}!A1:H1`,
+      valueInputOption: 'RAW',
+      requestBody: { values: [SHEET_HEADER] },
+    });
     return;
   }
 
-  await sheets.spreadsheets.batchUpdate({
+  const headerRow = await sheets.spreadsheets.values.get({
     spreadsheetId: process.env.SHEET_ID,
-    requestBody: {
-      requests: [{ addSheet: { properties: { title: SHEET_TAB_NAME } } }],
-    },
+    range: `${SHEET_TAB_NAME}!A1:H1`,
   });
+  const currentFirstRow = (headerRow.data.values && headerRow.data.values[0]) || [];
+
+  const headerMatches = SHEET_HEADER.every((col, i) => currentFirstRow[i] === col);
+  if (headerMatches) {
+    return;
+  }
+
+  const firstRowHasContent = currentFirstRow.some(
+    (cell) => cell !== '' && cell !== undefined && cell !== null
+  );
+
+  if (firstRowHasContent) {
+    // 第一列已經有內容但不是表頭：先插入一列把既有資料整體下移，避免覆蓋掉真實候選。
+    await sheets.spreadsheets.batchUpdate({
+      spreadsheetId: process.env.SHEET_ID,
+      requestBody: {
+        requests: [
+          {
+            insertDimension: {
+              range: {
+                sheetId: sheetMeta.properties.sheetId,
+                dimension: 'ROWS',
+                startIndex: 0,
+                endIndex: 1,
+              },
+            },
+          },
+        ],
+      },
+    });
+  }
 
   await sheets.spreadsheets.values.update({
     spreadsheetId: process.env.SHEET_ID,
-    range: `${SHEET_TAB_NAME}!A1:F1`,
+    range: `${SHEET_TAB_NAME}!A1:H1`,
     valueInputOption: 'RAW',
     requestBody: { values: [SHEET_HEADER] },
   });
@@ -207,7 +261,7 @@ async function ensureResearchTab(sheets) {
 
 /**
  * 將候選清單各寫成一列，附加到「候選題目」分頁(狀態固定「待挑選」)。
- * @param {Array<{title: string, summary: string, keywords: string[], sourceUrl: string}>} items
+ * @param {Array<{category: string, title: string, research: string, sourceLanguages: string, taiwanHook: string, sourceUrls: string[]}>} items
  * @returns {Promise<void>}
  */
 async function appendCandidates(items) {
@@ -218,15 +272,17 @@ async function appendCandidates(items) {
   const values = items.map((item) => [
     today,
     DEFAULT_STATUS,
+    item.category,
     item.title,
-    item.summary,
-    item.keywords.join('、'),
-    item.sourceUrl,
+    item.research,
+    item.sourceLanguages,
+    item.taiwanHook,
+    item.sourceUrls.join('\n'),
   ]);
 
   await sheets.spreadsheets.values.append({
     spreadsheetId: process.env.SHEET_ID,
-    range: `${SHEET_TAB_NAME}!A:F`,
+    range: SHEET_RANGE,
     valueInputOption: 'RAW',
     insertDataOption: 'INSERT_ROWS',
     requestBody: { values },

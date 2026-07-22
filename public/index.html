@@ -440,6 +440,76 @@
     margin-top: 4px;
   }
 
+  /* ---- 候選題目列表 ---- */
+  .candidate-item {
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius);
+    padding: 16px;
+    margin-bottom: 14px;
+    background: #fafbfc;
+  }
+  .candidate-item.status-selected {
+    border-color: rgba(26, 138, 74, 0.35);
+    background: var(--color-success-bg);
+  }
+  .candidate-item-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: 12px;
+    margin-bottom: 8px;
+  }
+  .candidate-item-title {
+    font-size: 15.5px;
+    font-weight: 700;
+    color: var(--color-text);
+  }
+  .candidate-item-meta {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+    align-items: center;
+    margin-bottom: 10px;
+  }
+  .status-pill {
+    display: inline-flex;
+    align-items: center;
+    flex-shrink: 0;
+    padding: 3px 10px;
+    border-radius: 999px;
+    font-size: 12px;
+    font-weight: 700;
+    white-space: nowrap;
+  }
+  .status-pill.pending { background: var(--color-skip-bg); color: var(--color-skip); }
+  .status-pill.selected { background: var(--color-success-bg); color: var(--color-success); }
+  .candidate-item-research {
+    font-size: 13.5px;
+    color: var(--color-text);
+    line-height: 1.7;
+    margin-bottom: 10px;
+    white-space: pre-wrap;
+  }
+  .candidate-item-hook {
+    font-size: 12.5px;
+    color: var(--color-text-muted);
+    font-style: italic;
+    margin-bottom: 10px;
+  }
+  .candidate-item-urls {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    margin-bottom: 12px;
+    font-size: 12.5px;
+  }
+  .candidate-item-urls a {
+    color: var(--color-primary);
+    text-decoration: none;
+    word-break: break-all;
+  }
+  .candidate-item-urls a:hover { text-decoration: underline; }
+
   footer.app-footer {
     text-align: center;
     color: var(--color-text-muted);
@@ -456,7 +526,9 @@
       <h1>隅消息上稿系統</h1>
       <div class="subtitle">貼稿 → 自動搜圖 → 一鍵完成 WordPress 草稿 / Drive 存檔 / Sheets 記錄</div>
     </div>
-    <div>
+    <div class="btn-row">
+      <button type="button" id="nav-compose" class="btn btn-secondary hidden">上稿</button>
+      <button type="button" id="nav-candidates" class="btn btn-secondary hidden">候選題目</button>
       <button type="button" id="btn-logout" class="btn btn-secondary hidden">登出</button>
     </div>
   </header>
@@ -550,6 +622,21 @@
     </div>
   </section>
 
+  <!-- ========== 候選題目畫面 ========== -->
+  <section id="view-candidates" class="card hidden">
+    <h2 class="section-title">候選題目（研究段產出，供選題）</h2>
+    <div id="candidates-alert"></div>
+    <div class="btn-row" style="margin-bottom:16px;">
+      <button type="button" class="btn btn-secondary" id="btn-candidates-refresh">重新整理</button>
+    </div>
+    <div id="candidates-loading" class="loading-box hidden">
+      <div class="spinner"></div>
+      <div>正在讀取候選題目…</div>
+    </div>
+    <div id="candidates-list"></div>
+    <div id="candidates-empty" class="empty-hint hidden">目前沒有候選題目，執行研究段（node src/research.js 或排程）後會出現在這裡。</div>
+  </section>
+
   <footer class="app-footer">隅消息上稿系統 · 內部工具</footer>
 </div>
 
@@ -577,10 +664,13 @@
     title: '',                // AI 判斷出的文章標題(唯讀顯示用)
     candidates: [],           // 目前候選圖清單
     selectedOrder: [],        // 已選圖片 id，依選取順序
+    candidatesList: [],       // 研究段候選題目清單(Google Sheets「候選題目」分頁)
   };
 
   // ---------------- DOM 參照 ----------------
   var el = {
+    navCompose: document.getElementById('nav-compose'),
+    navCandidates: document.getElementById('nav-candidates'),
     btnLogout: document.getElementById('btn-logout'),
 
     viewLogin: document.getElementById('view-login'),
@@ -617,7 +707,14 @@
     resultBanner: document.getElementById('result-banner'),
     resultLinks: document.getElementById('result-links'),
     stepList: document.getElementById('step-list'),
-    btnNextArticle: document.getElementById('btn-next-article')
+    btnNextArticle: document.getElementById('btn-next-article'),
+
+    viewCandidates: document.getElementById('view-candidates'),
+    candidatesAlert: document.getElementById('candidates-alert'),
+    btnCandidatesRefresh: document.getElementById('btn-candidates-refresh'),
+    candidatesLoading: document.getElementById('candidates-loading'),
+    candidatesList: document.getElementById('candidates-list'),
+    candidatesEmpty: document.getElementById('candidates-empty')
   };
 
   // ---------------- 工具函式 ----------------
@@ -633,11 +730,14 @@
   }
 
   function showView(name) {
-    ['viewLogin', 'viewCompose', 'viewPick', 'viewResult'].forEach(function (key) {
+    ['viewLogin', 'viewCompose', 'viewPick', 'viewResult', 'viewCandidates'].forEach(function (key) {
       el[key].classList.add('hidden');
     });
     el[name].classList.remove('hidden');
-    el.btnLogout.classList.toggle('hidden', name === 'viewLogin');
+    var authed = name !== 'viewLogin';
+    el.btnLogout.classList.toggle('hidden', !authed);
+    el.navCompose.classList.toggle('hidden', !authed);
+    el.navCandidates.classList.toggle('hidden', !authed);
   }
 
   function setAlert(container, message, type) {
@@ -1074,6 +1174,122 @@
     el.researchKeyword.value = '';
     showView('viewCompose');
   });
+
+  // ---------------- 候選題目流程 ----------------
+
+  el.navCompose.addEventListener('click', function () {
+    showView('viewCompose');
+  });
+
+  el.navCandidates.addEventListener('click', function () {
+    showView('viewCandidates');
+    loadCandidates();
+  });
+
+  el.btnCandidatesRefresh.addEventListener('click', function () {
+    loadCandidates();
+  });
+
+  function loadCandidates() {
+    clearAlert(el.candidatesAlert);
+    el.candidatesLoading.classList.remove('hidden');
+    el.candidatesList.innerHTML = '';
+    el.candidatesEmpty.classList.add('hidden');
+
+    apiFetch('/api/candidates', { method: 'GET' })
+      .then(function (data) {
+        state.candidatesList = Array.isArray(data.items) ? data.items : [];
+        renderCandidatesList();
+      })
+      .catch(function (err) {
+        setAlert(el.candidatesAlert, err.message || '讀取候選題目失敗，請重試。', 'error');
+      })
+      .then(function () {
+        el.candidatesLoading.classList.add('hidden');
+      });
+  }
+
+  function renderCandidatesList() {
+    var items = state.candidatesList;
+
+    if (!items.length) {
+      el.candidatesList.innerHTML = '';
+      el.candidatesEmpty.classList.remove('hidden');
+      return;
+    }
+
+    el.candidatesEmpty.classList.add('hidden');
+    el.candidatesList.innerHTML = items.map(renderCandidateItem).join('');
+    bindCandidateItemEvents();
+  }
+
+  function renderCandidateItem(item) {
+    var isSelected = item.status === '已選';
+    var pillClass = isSelected ? 'selected' : 'pending';
+    var pillText = isSelected ? '已選' : '待挑選';
+    var btnText = isSelected ? '取消已選' : '標記已選';
+    var btnClass = isSelected ? 'btn-secondary' : 'btn';
+    var nextStatus = isSelected ? '待挑選' : '已選';
+
+    var urlsHtml = item.sourceUrls.length
+      ? item.sourceUrls.map(function (url) {
+          return '<a href="' + escapeHtml(url) + '" target="_blank" rel="noopener">' + escapeHtml(url) + '</a>';
+        }).join('')
+      : '<span class="helper-text">（無參考連結）</span>';
+
+    var metaHtml = '';
+    if (item.category) {
+      metaHtml += '<span class="chip">' + escapeHtml(item.category) + '</span>';
+    }
+    if (item.sourceLanguages) {
+      metaHtml += '<span class="chip">' + escapeHtml(item.sourceLanguages) + '</span>';
+    }
+    if (item.date) {
+      metaHtml += '<span class="helper-text">' + escapeHtml(item.date) + '</span>';
+    }
+
+    return '' +
+      '<div class="candidate-item' + (isSelected ? ' status-selected' : '') + '">' +
+        '<div class="candidate-item-header">' +
+          '<div class="candidate-item-title">' + escapeHtml(item.title) + '</div>' +
+          '<span class="status-pill ' + pillClass + '">' + pillText + '</span>' +
+        '</div>' +
+        '<div class="candidate-item-meta">' + metaHtml + '</div>' +
+        '<div class="candidate-item-research">' + escapeHtml(item.research) + '</div>' +
+        (item.taiwanHook ? '<div class="candidate-item-hook">💡 ' + escapeHtml(item.taiwanHook) + '</div>' : '') +
+        '<div class="candidate-item-urls">' + urlsHtml + '</div>' +
+        '<button type="button" class="btn ' + btnClass + ' btn-toggle-status" data-row="' + item.rowNumber + '" data-next="' + nextStatus + '">' + btnText + '</button>' +
+      '</div>';
+  }
+
+  function bindCandidateItemEvents() {
+    var buttons = el.candidatesList.querySelectorAll('.btn-toggle-status');
+    buttons.forEach(function (btn) {
+      btn.addEventListener('click', function () {
+        var rowNumber = parseInt(btn.getAttribute('data-row'), 10);
+        var nextStatus = btn.getAttribute('data-next');
+        toggleCandidateStatus(rowNumber, nextStatus, btn);
+      });
+    });
+  }
+
+  function toggleCandidateStatus(rowNumber, nextStatus, btn) {
+    btn.disabled = true;
+    clearAlert(el.candidatesAlert);
+
+    apiFetch('/api/candidates/status', { method: 'POST', body: { rowNumber: rowNumber, status: nextStatus } })
+      .then(function () {
+        var item = state.candidatesList.filter(function (c) { return c.rowNumber === rowNumber; })[0];
+        if (item) {
+          item.status = nextStatus;
+        }
+        renderCandidatesList();
+      })
+      .catch(function (err) {
+        setAlert(el.candidatesAlert, err.message || '更新狀態失敗，請重試。', 'error');
+        btn.disabled = false;
+      });
+  }
 
   // ---------------- 啟動 ----------------
   checkSession();
