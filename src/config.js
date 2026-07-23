@@ -1,13 +1,14 @@
 'use strict';
 
 // 隅消息上稿系統 — 環境變數檢查
-// 規格第 8 節：11 個環境變數。啟動時逐一檢查並印出狀態(絕不印出值本身)。
+// 啟動時逐一檢查並印出狀態(絕不印出值本身)。
 
 // 全部需要檢查的環境變數名稱(順序即輸出順序)。
 const ENV_NAMES = [
   'PORT',
   'ADMIN_PASSWORD',
   'ANTHROPIC_API_KEY',
+  'GEMINI_API_KEY',
   'PEXELS_API_KEY',
   'UNSPLASH_ACCESS_KEY',
   'WP_BASE_URL',
@@ -22,6 +23,7 @@ const ENV_NAMES = [
 const IMPACT_HINTS = {
   ADMIN_PASSWORD: '無法登入系統(登入功能未設定)',
   ANTHROPIC_API_KEY: '無法自動抽取關鍵字(需手動指定關鍵字搜圖)',
+  GEMINI_API_KEY: '無法從網頁觸發補搜候選題目',
   PEXELS_API_KEY: 'Pexels 搜尋會略過',
   UNSPLASH_ACCESS_KEY: 'Unsplash 搜尋會略過',
   WP_BASE_URL: '無法建立 WordPress 草稿',
@@ -52,7 +54,7 @@ function missing(names) {
 }
 
 /**
- * 啟動時在 console 印出 11 個變數的設定狀態(繁體中文)。
+ * 啟動時在 console 印出每個變數的設定狀態(繁體中文)。
  * 注意：只印變數名稱與狀態，絕不印出值本身。
  * PORT 為特例：缺少時視為「未設定(使用預設 3000)」且不算缺少。
  */

@@ -440,17 +440,87 @@
     margin-top: 4px;
   }
 
-  /* ---- 候選題目列表 ---- */
+  /* ---- 候選題目：左右分欄 ---- */
+  .candidates-split {
+    display: flex;
+    gap: 20px;
+    align-items: flex-start;
+  }
+  .candidates-list-col {
+    width: 340px;
+    flex-shrink: 0;
+    max-height: 640px;
+    overflow-y: auto;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius);
+  }
+  .candidates-detail-col {
+    flex: 1;
+    min-width: 0;
+  }
+  .candidate-row {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    padding: 10px 14px;
+    border-bottom: 1px solid var(--color-border);
+    cursor: pointer;
+  }
+  .candidate-row:last-child { border-bottom: none; }
+  .candidate-row:hover { background: #f0f1f4; }
+  .candidate-row.active { background: #eef1fb; }
+  .candidate-row-top {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 8px;
+    font-size: 12px;
+    color: var(--color-text-muted);
+  }
+  .candidate-row-title {
+    font-size: 13.5px;
+    font-weight: 600;
+    color: var(--color-text);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .subsection-title {
+    font-size: 15px;
+    font-weight: 700;
+    margin: 0 0 12px;
+  }
+  .candidates-manual-form {
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius);
+    padding: 18px;
+    margin-bottom: 20px;
+    background: #fafbfc;
+  }
+
+  select {
+    width: 100%;
+    padding: 10px 12px;
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius);
+    font-size: 14px;
+    color: var(--color-text);
+    background: var(--color-surface);
+  }
+  select:focus {
+    outline: none;
+    border-color: var(--color-primary);
+    box-shadow: 0 0 0 3px rgba(47, 94, 224, 0.15);
+  }
+  .status-select { width: auto; min-width: 160px; }
+
+  /* ---- 候選題目詳情 ---- */
   .candidate-item {
     border: 1px solid var(--color-border);
     border-radius: var(--radius);
     padding: 16px;
-    margin-bottom: 14px;
     background: #fafbfc;
-  }
-  .candidate-item.status-selected {
-    border-color: rgba(26, 138, 74, 0.35);
-    background: var(--color-success-bg);
   }
   .candidate-item-header {
     display: flex;
@@ -482,7 +552,9 @@
     white-space: nowrap;
   }
   .status-pill.pending { background: var(--color-skip-bg); color: var(--color-skip); }
-  .status-pill.selected { background: var(--color-success-bg); color: var(--color-success); }
+  .status-pill.write { background: var(--color-success-bg); color: var(--color-success); }
+  .status-pill.later { background: var(--color-warning-bg); color: var(--color-warning); }
+  .status-pill.skip { background: #f0f1f4; color: var(--color-text-muted); }
   .candidate-item-research {
     font-size: 13.5px;
     color: var(--color-text);
@@ -494,6 +566,15 @@
     font-size: 12.5px;
     color: var(--color-text-muted);
     font-style: italic;
+    margin-bottom: 10px;
+  }
+  .candidate-item-note {
+    font-size: 12.5px;
+    color: var(--color-warning);
+    background: var(--color-warning-bg);
+    border: 1px solid rgba(165, 104, 10, 0.25);
+    border-radius: var(--radius);
+    padding: 6px 10px;
     margin-bottom: 10px;
   }
   .candidate-item-urls {
@@ -628,13 +709,66 @@
     <div id="candidates-alert"></div>
     <div class="btn-row" style="margin-bottom:16px;">
       <button type="button" class="btn btn-secondary" id="btn-candidates-refresh">重新整理</button>
+      <button type="button" class="btn btn-secondary" id="btn-candidates-research">再搜 3 則</button>
+      <button type="button" class="btn btn-secondary" id="btn-candidates-manual-toggle">手動新增</button>
     </div>
+
+    <div id="candidates-manual-form" class="candidates-manual-form hidden">
+      <h3 class="subsection-title">手動新增候選</h3>
+      <div id="candidates-manual-alert"></div>
+      <form id="manual-candidate-form">
+        <div class="field">
+          <label for="manual-title">題目 *</label>
+          <input type="text" id="manual-title" required />
+        </div>
+        <div class="field">
+          <label for="manual-category">分類（選填）</label>
+          <select id="manual-category">
+            <option value="">（不指定）</option>
+          </select>
+        </div>
+        <div class="field">
+          <label for="manual-note">說明／備註（選填）</label>
+          <textarea id="manual-note" style="min-height:100px;"></textarea>
+        </div>
+        <div class="field">
+          <label for="manual-links">參考連結（選填，可多行）</label>
+          <textarea id="manual-links" style="min-height:80px;"></textarea>
+        </div>
+        <div class="btn-row">
+          <button type="submit" class="btn" id="btn-manual-submit">加入候選</button>
+          <button type="button" class="btn btn-secondary" id="btn-manual-cancel">取消</button>
+        </div>
+      </form>
+    </div>
+
+    <div class="field">
+      <label for="candidates-filter">狀態篩選</label>
+      <select id="candidates-filter">
+        <option value="待挑選" selected>待挑選</option>
+        <option value="全部">全部</option>
+        <option value="撰寫">撰寫</option>
+        <option value="之後撰寫">之後撰寫</option>
+        <option value="不要">不要</option>
+      </select>
+    </div>
+
     <div id="candidates-loading" class="loading-box hidden">
       <div class="spinner"></div>
       <div>正在讀取候選題目…</div>
     </div>
-    <div id="candidates-list"></div>
-    <div id="candidates-empty" class="empty-hint hidden">目前沒有候選題目，執行研究段（node src/research.js 或排程）後會出現在這裡。</div>
+
+    <div id="candidates-split" class="candidates-split hidden">
+      <div class="candidates-list-col">
+        <div id="candidates-list"></div>
+      </div>
+      <div class="candidates-detail-col">
+        <div id="candidates-detail-empty" class="empty-hint">請從左側清單選取一則候選題目查看詳情。</div>
+        <div id="candidates-detail"></div>
+      </div>
+    </div>
+
+    <div id="candidates-empty" class="empty-hint hidden">目前沒有符合篩選條件的候選題目。</div>
   </section>
 
   <footer class="app-footer">隅消息上稿系統 · 內部工具</footer>
@@ -658,6 +792,12 @@
     error: '錯誤'
   };
 
+  // 候選題目四態狀態(需與 src/candidates.js 的 STATUS_LIST 保持一致)。
+  var CANDIDATE_STATUSES = ['待挑選', '撰寫', '之後撰寫', '不要'];
+
+  // 候選題目分類(需與 src/prompts/researchPrompt.js 的 CATEGORIES 保持一致)。
+  var CANDIDATE_CATEGORIES = ['工藝', '影音', '文化', '歷史', '時事', '生活', '產業', '科技', '社會', '飲食', '永續'];
+
   // ---------------- 全域狀態 ----------------
   var state = {
     taskId: null,
@@ -665,6 +805,9 @@
     candidates: [],           // 目前候選圖清單
     selectedOrder: [],        // 已選圖片 id，依選取順序
     candidatesList: [],       // 研究段候選題目清單(Google Sheets「候選題目」分頁)
+    candidatesFilter: '待挑選', // 候選題目左欄狀態篩選
+    candidatesSelectedRow: null, // 目前右欄顯示中的候選 rowNumber
+    candidatesResearching: false // 「再搜 3 則」是否執行中(防止重複送出)
   };
 
   // ---------------- DOM 參照 ----------------
@@ -712,8 +855,23 @@
     viewCandidates: document.getElementById('view-candidates'),
     candidatesAlert: document.getElementById('candidates-alert'),
     btnCandidatesRefresh: document.getElementById('btn-candidates-refresh'),
+    btnCandidatesResearch: document.getElementById('btn-candidates-research'),
+    btnCandidatesManualToggle: document.getElementById('btn-candidates-manual-toggle'),
+    candidatesManualForm: document.getElementById('candidates-manual-form'),
+    candidatesManualAlert: document.getElementById('candidates-manual-alert'),
+    manualCandidateForm: document.getElementById('manual-candidate-form'),
+    manualTitle: document.getElementById('manual-title'),
+    manualCategory: document.getElementById('manual-category'),
+    manualNote: document.getElementById('manual-note'),
+    manualLinks: document.getElementById('manual-links'),
+    btnManualSubmit: document.getElementById('btn-manual-submit'),
+    btnManualCancel: document.getElementById('btn-manual-cancel'),
+    candidatesFilter: document.getElementById('candidates-filter'),
     candidatesLoading: document.getElementById('candidates-loading'),
+    candidatesSplit: document.getElementById('candidates-split'),
     candidatesList: document.getElementById('candidates-list'),
+    candidatesDetailEmpty: document.getElementById('candidates-detail-empty'),
+    candidatesDetail: document.getElementById('candidates-detail'),
     candidatesEmpty: document.getElementById('candidates-empty')
   };
 
@@ -1190,13 +1348,18 @@
     loadCandidates();
   });
 
+  el.candidatesFilter.addEventListener('change', function () {
+    state.candidatesFilter = el.candidatesFilter.value;
+    renderCandidatesList();
+  });
+
   function loadCandidates() {
     clearAlert(el.candidatesAlert);
     el.candidatesLoading.classList.remove('hidden');
-    el.candidatesList.innerHTML = '';
+    el.candidatesSplit.classList.add('hidden');
     el.candidatesEmpty.classList.add('hidden');
 
-    apiFetch('/api/candidates', { method: 'GET' })
+    return apiFetch('/api/candidates', { method: 'GET' })
       .then(function (data) {
         state.candidatesList = Array.isArray(data.items) ? data.items : [];
         renderCandidatesList();
@@ -1209,33 +1372,95 @@
       });
   }
 
+  function statusPillClass(status) {
+    if (status === '撰寫') return 'write';
+    if (status === '之後撰寫') return 'later';
+    if (status === '不要') return 'skip';
+    return 'pending';
+  }
+
+  function getFilteredSortedCandidates() {
+    var items = state.candidatesList.slice();
+    if (state.candidatesFilter !== '全部') {
+      items = items.filter(function (i) { return i.status === state.candidatesFilter; });
+    }
+    items.sort(function (a, b) {
+      var da = new Date(a.date).getTime() || 0;
+      var db = new Date(b.date).getTime() || 0;
+      return db - da; // 新到舊
+    });
+    return items;
+  }
+
   function renderCandidatesList() {
-    var items = state.candidatesList;
+    var items = getFilteredSortedCandidates();
 
     if (!items.length) {
-      el.candidatesList.innerHTML = '';
+      el.candidatesSplit.classList.add('hidden');
       el.candidatesEmpty.classList.remove('hidden');
+      state.candidatesSelectedRow = null;
       return;
     }
 
     el.candidatesEmpty.classList.add('hidden');
-    el.candidatesList.innerHTML = items.map(renderCandidateItem).join('');
-    bindCandidateItemEvents();
+    el.candidatesSplit.classList.remove('hidden');
+    el.candidatesList.innerHTML = items.map(renderCandidateRow).join('');
+    bindCandidateRowEvents();
+
+    var stillVisible = items.some(function (i) { return i.rowNumber === state.candidatesSelectedRow; });
+    if (!stillVisible) {
+      state.candidatesSelectedRow = null;
+    }
+    renderCandidateDetail();
   }
 
-  function renderCandidateItem(item) {
-    var isSelected = item.status === '已選';
-    var pillClass = isSelected ? 'selected' : 'pending';
-    var pillText = isSelected ? '已選' : '待挑選';
-    var btnText = isSelected ? '取消已選' : '標記已選';
-    var btnClass = isSelected ? 'btn-secondary' : 'btn';
-    var nextStatus = isSelected ? '待挑選' : '已選';
+  function renderCandidateRow(item) {
+    var active = item.rowNumber === state.candidatesSelectedRow;
+    return '' +
+      '<div class="candidate-row' + (active ? ' active' : '') + '" data-row="' + item.rowNumber + '">' +
+        '<div class="candidate-row-top">' +
+          '<span>' + escapeHtml(item.date) + '</span>' +
+          '<span class="status-pill ' + statusPillClass(item.status) + '">' + escapeHtml(item.status) + '</span>' +
+        '</div>' +
+        '<div class="candidate-row-title">' + escapeHtml(item.title) + '</div>' +
+      '</div>';
+  }
+
+  function bindCandidateRowEvents() {
+    var rows = el.candidatesList.querySelectorAll('.candidate-row');
+    rows.forEach(function (row) {
+      row.addEventListener('click', function () {
+        state.candidatesSelectedRow = parseInt(row.getAttribute('data-row'), 10);
+        renderCandidatesList();
+      });
+    });
+  }
+
+  function renderCandidateDetail() {
+    if (!state.candidatesSelectedRow) {
+      el.candidatesDetail.innerHTML = '';
+      el.candidatesDetailEmpty.classList.remove('hidden');
+      return;
+    }
+
+    var item = state.candidatesList.filter(function (c) { return c.rowNumber === state.candidatesSelectedRow; })[0];
+    if (!item) {
+      el.candidatesDetail.innerHTML = '';
+      el.candidatesDetailEmpty.classList.remove('hidden');
+      return;
+    }
+    el.candidatesDetailEmpty.classList.add('hidden');
 
     var urlsHtml = item.sourceUrls.length
-      ? item.sourceUrls.map(function (url) {
-          return '<a href="' + escapeHtml(url) + '" target="_blank" rel="noopener">' + escapeHtml(url) + '</a>';
+      ? item.sourceUrls.map(function (src) {
+          var labelHtml = src.label ? '<strong>' + escapeHtml(src.label) + '：</strong>' : '';
+          return labelHtml + '<a href="' + escapeHtml(src.url) + '" target="_blank" rel="noopener">' + escapeHtml(src.url) + '</a>';
         }).join('')
       : '<span class="helper-text">（無參考連結）</span>';
+
+    var noteHtml = item.referenceNote
+      ? '<div class="candidate-item-note">⚠️ ' + escapeHtml(item.referenceNote) + '</div>'
+      : '';
 
     var metaHtml = '';
     if (item.category) {
@@ -1248,48 +1473,125 @@
       metaHtml += '<span class="helper-text">' + escapeHtml(item.date) + '</span>';
     }
 
-    return '' +
-      '<div class="candidate-item' + (isSelected ? ' status-selected' : '') + '">' +
+    var statusOptionsHtml = CANDIDATE_STATUSES.map(function (s) {
+      return '<option value="' + escapeHtml(s) + '"' + (s === item.status ? ' selected' : '') + '>' + escapeHtml(s) + '</option>';
+    }).join('');
+
+    el.candidatesDetail.innerHTML = '' +
+      '<div class="candidate-item">' +
         '<div class="candidate-item-header">' +
           '<div class="candidate-item-title">' + escapeHtml(item.title) + '</div>' +
-          '<span class="status-pill ' + pillClass + '">' + pillText + '</span>' +
+          '<select class="status-select" id="candidate-detail-status" data-row="' + item.rowNumber + '">' + statusOptionsHtml + '</select>' +
         '</div>' +
         '<div class="candidate-item-meta">' + metaHtml + '</div>' +
         '<div class="candidate-item-research">' + escapeHtml(item.research) + '</div>' +
         (item.taiwanHook ? '<div class="candidate-item-hook">💡 ' + escapeHtml(item.taiwanHook) + '</div>' : '') +
+        noteHtml +
         '<div class="candidate-item-urls">' + urlsHtml + '</div>' +
-        '<button type="button" class="btn ' + btnClass + ' btn-toggle-status" data-row="' + item.rowNumber + '" data-next="' + nextStatus + '">' + btnText + '</button>' +
       '</div>';
-  }
 
-  function bindCandidateItemEvents() {
-    var buttons = el.candidatesList.querySelectorAll('.btn-toggle-status');
-    buttons.forEach(function (btn) {
-      btn.addEventListener('click', function () {
-        var rowNumber = parseInt(btn.getAttribute('data-row'), 10);
-        var nextStatus = btn.getAttribute('data-next');
-        toggleCandidateStatus(rowNumber, nextStatus, btn);
-      });
+    document.getElementById('candidate-detail-status').addEventListener('change', function () {
+      var select = this;
+      var rowNumber = parseInt(select.getAttribute('data-row'), 10);
+      var newStatus = select.value;
+      select.disabled = true;
+      clearAlert(el.candidatesAlert);
+
+      apiFetch('/api/candidates/status', { method: 'POST', body: { rowNumber: rowNumber, status: newStatus } })
+        .then(function () {
+          var changedItem = state.candidatesList.filter(function (c) { return c.rowNumber === rowNumber; })[0];
+          if (changedItem) {
+            changedItem.status = newStatus;
+          }
+          renderCandidatesList();
+        })
+        .catch(function (err) {
+          setAlert(el.candidatesAlert, err.message || '更新狀態失敗，請重試。', 'error');
+          select.disabled = false;
+          select.value = item.status;
+        });
     });
   }
 
-  function toggleCandidateStatus(rowNumber, nextStatus, btn) {
-    btn.disabled = true;
+  // ---- 再搜 3 則 ----
+
+  el.btnCandidatesResearch.addEventListener('click', function () {
+    if (state.candidatesResearching) return;
+
+    state.candidatesResearching = true;
+    el.btnCandidatesResearch.disabled = true;
+    var originalText = el.btnCandidatesResearch.textContent;
+    el.btnCandidatesResearch.textContent = '搜尋中…';
     clearAlert(el.candidatesAlert);
 
-    apiFetch('/api/candidates/status', { method: 'POST', body: { rowNumber: rowNumber, status: nextStatus } })
+    apiFetch('/api/candidates/research', { method: 'POST' })
       .then(function () {
-        var item = state.candidatesList.filter(function (c) { return c.rowNumber === rowNumber; })[0];
-        if (item) {
-          item.status = nextStatus;
-        }
-        renderCandidatesList();
+        return loadCandidates();
       })
       .catch(function (err) {
-        setAlert(el.candidatesAlert, err.message || '更新狀態失敗，請重試。', 'error');
-        btn.disabled = false;
+        setAlert(el.candidatesAlert, err.message || '補搜候選題目失敗，請重試。', 'error');
+      })
+      .then(function () {
+        state.candidatesResearching = false;
+        el.btnCandidatesResearch.disabled = false;
+        el.btnCandidatesResearch.textContent = originalText;
       });
+  });
+
+  // ---- 手動新增 ----
+
+  function populateManualCategoryOptions() {
+    var optionsHtml = CANDIDATE_CATEGORIES.map(function (c) {
+      return '<option value="' + escapeHtml(c) + '">' + escapeHtml(c) + '</option>';
+    }).join('');
+    el.manualCategory.innerHTML = '<option value="">（不指定）</option>' + optionsHtml;
   }
+
+  el.btnCandidatesManualToggle.addEventListener('click', function () {
+    el.candidatesManualForm.classList.toggle('hidden');
+  });
+
+  el.btnManualCancel.addEventListener('click', function () {
+    el.candidatesManualForm.classList.add('hidden');
+    el.manualCandidateForm.reset();
+    clearAlert(el.candidatesManualAlert);
+  });
+
+  el.manualCandidateForm.addEventListener('submit', function (e) {
+    e.preventDefault();
+
+    var title = el.manualTitle.value.trim();
+    if (!title) {
+      setAlert(el.candidatesManualAlert, '請輸入題目。', 'error');
+      return;
+    }
+
+    el.btnManualSubmit.disabled = true;
+    clearAlert(el.candidatesManualAlert);
+
+    apiFetch('/api/candidates', {
+      method: 'POST',
+      body: {
+        title: title,
+        category: el.manualCategory.value || '',
+        note: el.manualNote.value.trim(),
+        links: el.manualLinks.value.trim()
+      }
+    })
+      .then(function () {
+        el.manualCandidateForm.reset();
+        el.candidatesManualForm.classList.add('hidden');
+        return loadCandidates();
+      })
+      .catch(function (err) {
+        setAlert(el.candidatesManualAlert, err.message || '新增失敗，請重試。', 'error');
+      })
+      .then(function () {
+        el.btnManualSubmit.disabled = false;
+      });
+  });
+
+  populateManualCategoryOptions();
 
   // ---------------- 啟動 ----------------
   checkSession();

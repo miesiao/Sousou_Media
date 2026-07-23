@@ -203,24 +203,25 @@ app.post('/api/research', async (req, res) => {
 // GET /api/candidates — 讀取「候選題目」分頁(研究段產出，供人工選題)。
 app.get('/api/candidates', async (req, res) => {
   try {
-    const { listCandidates } = require('./candidates');
+    const { listCandidates, STATUS_LIST } = require('./candidates');
+    const { CATEGORIES } = require('./prompts/researchPrompt');
     const items = await listCandidates();
-    return res.json({ items });
+    return res.json({ items, statuses: STATUS_LIST, categories: CATEGORIES });
   } catch (err) {
     console.error('[candidates] 讀取候選題目失敗：', err && err.message);
     return res.status(500).json({ error: `讀取候選題目失敗：${err && err.message}` });
   }
 });
 
-// POST /api/candidates/status — 切換單一候選的狀態(待挑選 ↔ 已選)。
+// POST /api/candidates/status — 切換單一候選的狀態(待挑選／撰寫／之後撰寫／不要 四態)。
 app.post('/api/candidates/status', async (req, res) => {
   const { rowNumber, status } = req.body || {};
-  const { STATUS_PENDING, STATUS_SELECTED, setCandidateStatus } = require('./candidates');
+  const { STATUS_LIST, setCandidateStatus } = require('./candidates');
 
   if (!Number.isInteger(rowNumber) || rowNumber < 2) {
     return res.status(400).json({ error: '缺少或無效的 rowNumber' });
   }
-  if (status !== STATUS_PENDING && status !== STATUS_SELECTED) {
+  if (!STATUS_LIST.includes(status)) {
     return res.status(400).json({ error: '無效的狀態值' });
   }
 
@@ -230,6 +231,79 @@ app.post('/api/candidates/status', async (req, res) => {
   } catch (err) {
     console.error('[candidates] 更新候選狀態失敗：', err && err.message);
     return res.status(500).json({ error: `更新候選狀態失敗：${err && err.message}` });
+  }
+});
+
+// 「再搜 N 則」的後端等待上限：Gemini 帶搜尋 grounding 可能要 30-60 秒，
+// 拉到 90 秒讓大多數情況能正常等到結果；真的逾時就先回應讓前端解除鎖定，
+// 背景呼叫仍可能繼續跑完並寫入 Sheet(之後按「重新整理」就看得到)。
+const CANDIDATES_RESEARCH_TIMEOUT_MS = 90000;
+const CANDIDATES_RESEARCH_COUNT = 3;
+
+// POST /api/candidates/research — 呼叫 Gemini 產生 3 則新候選，append 進 Sheet。
+app.post('/api/candidates/research', async (req, res) => {
+  const { missingEnv, generateCandidates } = require('./research');
+
+  const missing = missingEnv();
+  if (missing.length > 0) {
+    return res.status(500).json({
+      error: `無法從網頁觸發補搜候選題目(缺少 ${missing.join('、')})`,
+    });
+  }
+
+  const timeout = new Promise((resolve) => {
+    setTimeout(() => resolve({ timedOut: true }), CANDIDATES_RESEARCH_TIMEOUT_MS);
+  });
+
+  try {
+    const result = await Promise.race([
+      generateCandidates(CANDIDATES_RESEARCH_COUNT).then((items) => ({ items })),
+      timeout,
+    ]);
+
+    if (result.timedOut) {
+      return res.status(504).json({
+        error: '搜尋逾時(超過 90 秒)，可能仍在背景寫入，請稍後按「重新整理」查看是否已出現新候選。',
+      });
+    }
+
+    return res.json({ ok: true, count: result.items.length });
+  } catch (err) {
+    console.error('[candidates] 補搜候選題目失敗：', err && err.message);
+    return res.status(500).json({ error: `補搜候選題目失敗：${err && err.message}` });
+  }
+});
+
+// POST /api/candidates — 手動新增候選(走跟自動產出完全相同的後續流程)。
+app.post('/api/candidates', async (req, res) => {
+  const { title, category, note, links } = req.body || {};
+  const { missingEnv } = require('./candidates');
+  const { appendManualCandidate } = require('./research');
+  const { CATEGORIES } = require('./prompts/researchPrompt');
+
+  if (!title || typeof title !== 'string' || title.trim() === '') {
+    return res.status(400).json({ error: '缺少題目' });
+  }
+  if (category && !CATEGORIES.includes(category)) {
+    return res.status(400).json({ error: '無效的分類' });
+  }
+
+  const missing = missingEnv();
+  if (missing.length > 0) {
+    return res.status(500).json({ error: `無法新增候選題目(缺少 ${missing.join('、')})` });
+  }
+
+  try {
+    await appendManualCandidate({
+      title: title.trim(),
+      category: category || '',
+      note: typeof note === 'string' ? note.trim() : '',
+      referenceText: typeof links === 'string' ? links.trim() : '',
+    });
+    return res.json({ ok: true });
+  } catch (err) {
+    console.error('[candidates] 手動新增候選失敗：', err && err.message);
+    return res.status(500).json({ error: `手動新增候選失敗：${err && err.message}` });
   }
 });
 
