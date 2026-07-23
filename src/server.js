@@ -91,8 +91,10 @@ app.get('/api/session', (req, res) => {
 app.use('/api', requireAuth);
 
 // POST /api/submit — 送出文章：建 task → AI 判斷標題+抽關鍵字 → 搜圖。
+// articleRowNumber(選填)：若是從「撰寫中」草稿編輯進來，帶入該列的 rowNumber，
+// 供 /api/publish 送出成功後回頭把 Sheet「文章」分頁該列標記為「已定稿」。
 app.post('/api/submit', async (req, res) => {
-  const { content } = req.body || {};
+  const { content, articleRowNumber } = req.body || {};
 
   if (!content || typeof content !== 'string' || content.trim() === '') {
     return res.status(400).json({ error: '缺少文章內容' });
@@ -124,6 +126,7 @@ app.post('/api/submit', async (req, res) => {
     markdown,
     candidates: [],
     createdAt: Date.now(),
+    articleRowNumber: Number.isInteger(articleRowNumber) ? articleRowNumber : null,
   };
   tasks.set(taskId, task);
 
@@ -328,6 +331,119 @@ app.post('/api/candidates', async (req, res) => {
   }
 });
 
+// 撰寫段生成初稿：長文生成較久，後端 timeout 拉到 120 秒。
+const WRITE_TIMEOUT_MS = 120000;
+
+// POST /api/write — 依候選題目資料生成一篇文章初稿(Claude 或 Gemini)，寫入 Sheet「文章」分頁一列(狀態「撰寫中」)。
+// 同一則候選可重複生成，每次都會建立新的一列，不做「只能生成一次」的限制。
+app.post('/api/write', async (req, res) => {
+  const { rowNumber, model } = req.body || {};
+
+  if (!Number.isInteger(rowNumber) || rowNumber < 2) {
+    return res.status(400).json({ error: '缺少或無效的候選題目 rowNumber' });
+  }
+
+  const { MODEL_LIST, missingEnv: writingMissingEnv, generateDraft } = require('./writing');
+  if (!MODEL_LIST.includes(model)) {
+    return res.status(400).json({ error: `無效的模型：${model}` });
+  }
+
+  const missing = writingMissingEnv(model);
+  if (missing.length > 0) {
+    return res.status(500).json({ error: `無法生成草稿(缺少 ${missing.join('、')})` });
+  }
+
+  try {
+    const { listCandidates } = require('./candidates');
+    const items = await listCandidates();
+    const candidate = items.find((c) => c.rowNumber === rowNumber);
+    if (!candidate) {
+      return res.status(404).json({ error: '找不到指定的候選題目' });
+    }
+
+    // 參考資料只帶媒體名稱給模型，不帶網址(避免模型抄錯或杜撰網址)。
+    const mediaNames = Array.from(new Set(
+      (candidate.sourceUrls || [])
+        .map((s) => s.mediaLabel)
+        .filter(Boolean)
+    ));
+
+    const timeout = new Promise((_, reject) => {
+      setTimeout(() => reject(new Error('生成逾時(超過 120 秒)，請重試')), WRITE_TIMEOUT_MS);
+    });
+
+    const draft = await Promise.race([
+      generateDraft({
+        candidate: {
+          title: candidate.title,
+          category: candidate.category,
+          research: candidate.research,
+          sourceLanguages: candidate.sourceLanguages,
+          taiwanHook: candidate.taiwanHook,
+          mediaNames,
+        },
+        model,
+      }),
+      timeout,
+    ]);
+
+    const { createArticleDraft } = require('./articles');
+    const modelLabel = model === 'claude' ? 'Claude' : 'Gemini';
+    const { articleId, rowNumber: articleRowNumber } = await createArticleDraft({
+      title: draft.title,
+      sourceCandidateTitle: candidate.title,
+      content: draft.content,
+      category: draft.category,
+      tags: draft.tags,
+      modelLabel,
+    });
+
+    return res.json({ ok: true, articleId, rowNumber: articleRowNumber, model: modelLabel });
+  } catch (err) {
+    console.error('[write] 生成草稿失敗：', err && err.message);
+    return res.status(500).json({ error: `生成草稿失敗：${err && err.message}` });
+  }
+});
+
+// GET /api/articles — 讀取「文章」分頁，預設只回傳「撰寫中」的列(供「撰寫中」頁面列表用)。
+app.get('/api/articles', async (req, res) => {
+  const status = typeof req.query.status === 'string' && req.query.status.trim() !== ''
+    ? req.query.status.trim()
+    : '撰寫中';
+
+  try {
+    const { listArticlesByStatus } = require('./articles');
+    const items = await listArticlesByStatus(status);
+    return res.json({ items });
+  } catch (err) {
+    console.error('[articles] 讀取文章失敗：', err && err.message);
+    return res.status(500).json({ error: `讀取文章失敗：${err && err.message}` });
+  }
+});
+
+// POST /api/articles/:rowNumber/draft — 儲存草稿(編輯區「儲存草稿」按鈕與停止輸入 3 秒後自動存檔共用)。
+// title 是獨立欄位(可選)，未提供時只更新內文，不動標題欄。
+app.post('/api/articles/:rowNumber/draft', async (req, res) => {
+  const rowNumber = parseInt(req.params.rowNumber, 10);
+  const { title, content } = req.body || {};
+
+  if (!Number.isInteger(rowNumber) || rowNumber < 2) {
+    return res.status(400).json({ error: '缺少或無效的 rowNumber' });
+  }
+  if (typeof content !== 'string') {
+    return res.status(400).json({ error: '缺少文章內容' });
+  }
+
+  try {
+    const { updateArticleDraft } = require('./articles');
+    await updateArticleDraft(rowNumber, { title, content });
+    return res.json({ ok: true });
+  } catch (err) {
+    console.error('[articles] 儲存草稿失敗：', err && err.message);
+    return res.status(500).json({ error: `儲存草稿失敗：${err && err.message}` });
+  }
+});
+
 // POST /api/publish — 上稿：WP 草稿 + Drive 存檔 + Sheets 記錄。
 app.post('/api/publish', async (req, res) => {
   const { taskId, selectedIds } = req.body || {};
@@ -342,6 +458,21 @@ app.post('/api/publish', async (req, res) => {
   try {
     const { publishArticle } = require('./publish');
     const result = await publishArticle(task, ids);
+
+    // 若這次送出來自「撰寫中」草稿編輯(task.articleRowNumber 有值)且 Drive 存檔成功，
+    // 視為定稿：把 Sheet「文章」分頁該列狀態改為「已定稿」並記錄 Drive 檔案 ID。
+    // Drive 沒成功就不標記定稿，讓該列繼續留在「撰寫中」，避免定稿卻沒有檔案 ID 的不一致狀態。
+    if (task.articleRowNumber && result.steps && result.steps.drive && result.steps.drive.status === 'ok' && result.steps.drive.fileId) {
+      try {
+        const { finalizeArticle } = require('./articles');
+        await finalizeArticle(task.articleRowNumber, result.steps.drive.fileId);
+        result.articleFinalized = true;
+      } catch (err) {
+        console.error('[publish] 標記文章定稿失敗(不影響上稿結果)：', err && err.message);
+        result.articleFinalized = false;
+      }
+    }
+
     // 即使部分步驟失敗也回 200，部分成功資訊在 body 內。
     return res.json(result);
   } catch (err) {

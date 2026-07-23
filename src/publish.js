@@ -268,6 +268,7 @@ async function stepDrive(task, images, number) {
 
   const fileErrors = [];
   let fileUrl = '';
+  let fileId = '';
   let articleFilename = '';
 
   // 文章 Markdown。
@@ -282,6 +283,7 @@ async function stepDrive(task, images, number) {
       'Google Drive 上傳文章檔案'
     );
     fileUrl = uploaded.fileUrl || '';
+    fileId = uploaded.fileId || '';
     articleFilename = uploaded.filename || '';
   } catch (err) {
     console.error('[publish] Drive 上傳文章檔案失敗：', err && err.message);
@@ -327,14 +329,14 @@ async function stepDrive(task, images, number) {
     const message = articleFilename
       ? `已存檔到 Google Drive(${articleFilename})，但部分檔案上傳失敗：${fileErrors.join('；')}`
       : `Google Drive 存檔失敗：${fileErrors.join('；')}`;
-    return { status: 'error', message, fileUrl };
+    return { status: 'error', message, fileUrl, fileId };
   }
 
   let message = `已存檔到 Google Drive(${articleFilename})`;
   if (uploadedImageCount > 0) {
     message += `，並上傳 ${uploadedImageCount} 張圖片到 picture 資料夾`;
   }
-  return { status: 'ok', message, fileUrl };
+  return { status: 'ok', message, fileUrl, fileId };
 }
 
 /**
@@ -452,6 +454,7 @@ async function publishArticle(task, selectedIds) {
       status: drive.status,
       message: drive.message,
       fileUrl: drive.fileUrl,
+      fileId: drive.fileId || '',
     },
     sheets: {
       status: sheetsResult.status,
