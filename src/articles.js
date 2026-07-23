@@ -4,9 +4,13 @@
 // 草稿內文存在 Sheet「文章」分頁的儲存格內(一篇一列)，不在撰寫/編輯階段寫檔到 Drive。
 // Drive 只在「定稿」(既有上稿流程送出成功)時才產生 .md 檔，見 src/publish.js。
 //
-// 欄位順序(A–J)：
+// 欄位順序(A–K)：
 // A 文章ID / B 建立日期 / C 狀態 / D 標題 / E 來源候選題目 /
-// F 內文Markdown / G 建議分類 / H 建議標籤 / I 修改指示紀錄 / J Drive檔案ID
+// F 內文Markdown / G 建議分類 / H 建議標籤 / I 修改指示紀錄 / J Drive檔案ID / K 參考連結
+//
+// K 參考連結：來自候選題目當初已驗證的來源網址(candidates.js 的 sourceUrls)，
+// 建立草稿時由後端直接寫入，依原本順序排好，不經過模型、也不提供編輯——
+// 只是把選題當下已知的真實連結原樣附在文章紀錄旁供編輯核對，不是模型輸出的一部分。
 //
 // 單一儲存格上限約 5 萬字元，2000 字中文稿(F 欄)無虞。
 
@@ -16,10 +20,10 @@ const { getAuthClient, missingAuthEnv } = require('./googleAuth');
 const SHEET_TAB_NAME = '文章';
 const SHEET_HEADER = [
   '文章ID', '建立日期', '狀態', '標題', '來源候選題目',
-  '內文Markdown', '建議分類', '建議標籤', '修改指示紀錄', 'Drive檔案ID',
+  '內文Markdown', '建議分類', '建議標籤', '修改指示紀錄', 'Drive檔案ID', '參考連結',
 ];
-const DATA_RANGE = `${SHEET_TAB_NAME}!A2:J`;
-const FULL_RANGE = `${SHEET_TAB_NAME}!A:J`;
+const DATA_RANGE = `${SHEET_TAB_NAME}!A2:K`;
+const FULL_RANGE = `${SHEET_TAB_NAME}!A:K`;
 
 const STATUS_DRAFTING = '撰寫中';
 const STATUS_FINALIZED = '已定稿';
@@ -88,7 +92,7 @@ async function ensureArticlesTab(sheets) {
 
     await sheets.spreadsheets.values.update({
       spreadsheetId: process.env.SHEET_ID,
-      range: `${SHEET_TAB_NAME}!A1:J1`,
+      range: `${SHEET_TAB_NAME}!A1:K1`,
       valueInputOption: 'RAW',
       requestBody: { values: [SHEET_HEADER] },
     });
@@ -97,7 +101,7 @@ async function ensureArticlesTab(sheets) {
 
   const headerRow = await sheets.spreadsheets.values.get({
     spreadsheetId: process.env.SHEET_ID,
-    range: `${SHEET_TAB_NAME}!A1:J1`,
+    range: `${SHEET_TAB_NAME}!A1:K1`,
   });
   const currentFirstRow = (headerRow.data.values && headerRow.data.values[0]) || [];
 
@@ -132,7 +136,7 @@ async function ensureArticlesTab(sheets) {
 
   await sheets.spreadsheets.values.update({
     spreadsheetId: process.env.SHEET_ID,
-    range: `${SHEET_TAB_NAME}!A1:J1`,
+    range: `${SHEET_TAB_NAME}!A1:K1`,
     valueInputOption: 'RAW',
     requestBody: { values: [SHEET_HEADER] },
   });
@@ -172,7 +176,7 @@ async function getNextArticleId(sheets) {
 /**
  * 讀取「文章」分頁全部列(含 rowNumber，供更新/定稿時定位列)。
  * 分頁尚未存在時視為沒有文章，回傳空陣列而不是報錯。
- * @returns {Promise<Array<{rowNumber:number, articleId:number, createdDate:string, status:string, title:string, sourceCandidateTitle:string, content:string, category:string, tags:string[], modelLog:string, driveFileId:string}>>}
+ * @returns {Promise<Array<{rowNumber:number, articleId:number, createdDate:string, status:string, title:string, sourceCandidateTitle:string, content:string, category:string, tags:string[], modelLog:string, driveFileId:string, referenceLinks:string}>>}
  */
 async function listArticles() {
   const missing = missingEnv();
@@ -203,7 +207,7 @@ async function listArticles() {
       const rowNumber = i + 2; // A2 起算
       const [
         articleIdRaw, createdDate, status, title, sourceCandidateTitle,
-        content, category, tagsRaw, modelLog, driveFileId,
+        content, category, tagsRaw, modelLog, driveFileId, referenceLinks,
       ] = row;
 
       if (!title || !String(title).trim()) {
@@ -228,6 +232,7 @@ async function listArticles() {
         tags,
         modelLog: modelLog || '',
         driveFileId: driveFileId || '',
+        referenceLinks: referenceLinks || '',
       };
     })
     .filter(Boolean);
@@ -252,9 +257,10 @@ async function listArticlesByStatus(status) {
  * @param {string} params.category 建議分類
  * @param {string[]} params.tags 建議標籤
  * @param {string} params.modelLabel 使用的模型標籤(例如「Claude」或「Gemini」)，寫入 I 欄供辨識
+ * @param {string} [params.referenceLinks] 來源候選題目已驗證的參考連結(依序排好的純文字，見檔頭說明)，寫入 K 欄
  * @returns {Promise<{articleId: number, rowNumber: number}>}
  */
-async function createArticleDraft({ title, sourceCandidateTitle, content, category, tags, modelLabel }) {
+async function createArticleDraft({ title, sourceCandidateTitle, content, category, tags, modelLabel, referenceLinks }) {
   const missing = missingEnv();
   if (missing.length > 0) {
     throw new Error(`Google Sheets 未設定(缺少 ${missing.join('、')})，無法建立文章草稿`);
@@ -276,7 +282,7 @@ async function createArticleDraft({ title, sourceCandidateTitle, content, catego
     requestBody: {
       values: [[
         articleId, today, STATUS_DRAFTING, title, sourceCandidateTitle || '',
-        content || '', category || '', tagsText, modelLog, '',
+        content || '', category || '', tagsText, modelLog, '', referenceLinks || '',
       ]],
     },
   });

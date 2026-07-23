@@ -726,6 +726,30 @@
     word-break: break-word;
   }
 
+  .drafts-reference-links {
+    margin-top: 18px;
+    padding-top: 14px;
+    border-top: 1px solid var(--color-border);
+  }
+  .drafts-reference-links-label {
+    font-size: 12.5px;
+    font-weight: 700;
+    color: var(--color-text-muted);
+    margin-bottom: 6px;
+  }
+  .drafts-reference-links-list {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    font-size: 12.5px;
+  }
+  .drafts-reference-links-list a {
+    color: var(--color-primary);
+    text-decoration: none;
+    word-break: break-all;
+  }
+  .drafts-reference-links-list a:hover { text-decoration: underline; }
+
   .drafts-edit-actions {
     display: flex;
     align-items: center;
@@ -972,6 +996,12 @@
             <div id="drafts-view-content" class="drafts-content-display"></div>
           </div>
 
+          <!-- 參考連結：選題當下已驗證的來源網址，依序附上，檢視／編輯模式都唯讀顯示，不提供編輯 -->
+          <div id="drafts-reference-links" class="drafts-reference-links hidden">
+            <div class="drafts-reference-links-label">參考連結</div>
+            <div id="drafts-reference-links-list" class="drafts-reference-links-list"></div>
+          </div>
+
           <!-- 編輯模式：按「編輯」後才切換進來 -->
           <div id="drafts-edit-mode" class="hidden">
             <div class="field">
@@ -1147,6 +1177,8 @@
     draftsViewMode: document.getElementById('drafts-view-mode'),
     draftsViewTitle: document.getElementById('drafts-view-title'),
     draftsViewContent: document.getElementById('drafts-view-content'),
+    draftsReferenceLinks: document.getElementById('drafts-reference-links'),
+    draftsReferenceLinksList: document.getElementById('drafts-reference-links-list'),
     draftsEditMode: document.getElementById('drafts-edit-mode'),
     draftsEditTitle: document.getElementById('drafts-edit-title'),
     draftsEditContent: document.getElementById('drafts-edit-content'),
@@ -2245,6 +2277,26 @@
     renderDraftsDetail();
   }
 
+  // 參考連結：選題時已驗證的來源網址(K 欄，依序存好的「媒體：網址」純文字，一行一則)，
+  // 唯讀顯示在檢視／編輯模式下方，不論哪個模式都看得到、都不能編輯。
+  function renderReferenceLinks(raw) {
+    var lines = String(raw || '').split('\n').map(function (l) { return l.trim(); }).filter(Boolean);
+
+    if (!lines.length) {
+      el.draftsReferenceLinks.classList.add('hidden');
+      el.draftsReferenceLinksList.innerHTML = '';
+      return;
+    }
+
+    el.draftsReferenceLinks.classList.remove('hidden');
+    el.draftsReferenceLinksList.innerHTML = lines.map(function (line) {
+      var idx = line.indexOf('：');
+      var label = idx === -1 ? line : line.slice(0, idx);
+      var url = idx === -1 ? line : line.slice(idx + 1);
+      return '<a href="' + escapeHtml(url) + '" target="_blank" rel="noopener">' + escapeHtml(label) + '</a>';
+    }).join('');
+  }
+
   // 右欄：依 state.articleEditMode 顯示唯讀檢視或可編輯表單。
   function renderDraftsDetail() {
     var item = state.articlesList.filter(function (a) { return a.rowNumber === state.selectedArticleRowNumber; })[0];
@@ -2259,6 +2311,7 @@
 
     el.draftsDetailDate.textContent = item.createdDate;
     el.draftsDetailModel.textContent = modelLabelFromLog(item.modelLog);
+    renderReferenceLinks(item.referenceLinks);
 
     if (state.articleEditMode) {
       el.btnEditArticle.classList.add('hidden');
@@ -2296,9 +2349,10 @@
 
   // 存檔：把獨立的標題欄位重新組回內文最前面一行，寫回 Sheet(D 欄標題、F 欄內文)。
   // 只重畫左欄卡片(標題可能變了)，不重畫右欄，避免打斷正在輸入的游標與內容。
+  // 回傳值恆為 resolved 的 Promise<boolean>，boolean 代表這次存檔是否成功(呼叫端自行決定要不要依此切換畫面)。
   function saveDraftContent() {
     var rowNumber = state.selectedArticleRowNumber;
-    if (!rowNumber || !state.articleEditMode) return Promise.resolve();
+    if (!rowNumber || !state.articleEditMode) return Promise.resolve(false);
 
     var title = el.draftsEditTitle.value.trim();
     var fullContent = title ? ensureTitleHeading(title, el.draftsEditContent.value) : el.draftsEditContent.value;
@@ -2316,18 +2370,27 @@
           item.content = fullContent;
           renderDraftsList();
         }
+        return true;
       })
       .catch(function (err) {
         el.draftStatusText.textContent = '儲存失敗：' + (err.message || '請重試');
+        return false;
       });
   }
 
+  // 按「儲存草稿」存檔成功後，回到原先審視的檢視(非編輯)狀態；存檔失敗則停留在編輯模式，
+  // 讓使用者看得到錯誤訊息並可以重試，不會悄悄把還沒存成功的內容切掉。
   el.btnSaveDraft.addEventListener('click', function () {
     if (draftSaveTimer) {
       clearTimeout(draftSaveTimer);
       draftSaveTimer = null;
     }
-    saveDraftContent();
+    saveDraftContent().then(function (success) {
+      if (success) {
+        state.articleEditMode = false;
+        renderDraftsDetail();
+      }
+    });
   });
 
   // 「完成並搜圖」：先確保草稿(含標題異動)已存檔，再走既有 /api/submit → 挑圖流程。

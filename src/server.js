@@ -368,6 +368,12 @@ app.post('/api/write', async (req, res) => {
         .filter(Boolean)
     ));
 
+    // 選題當下已驗證的真實參考連結，依原本順序整理成純文字，直接附進文章紀錄(K 欄)供編輯核對；
+    // 不經過模型、之後也不提供編輯，純粹是把候選題目原有的來源連結原樣帶過來。
+    const referenceLinks = (candidate.sourceUrls || [])
+      .map((s) => (s.mediaLabel ? `${s.mediaLabel}：${s.url}` : s.url))
+      .join('\n');
+
     const timeout = new Promise((_, reject) => {
       setTimeout(() => reject(new Error('生成逾時(超過 120 秒)，請重試')), WRITE_TIMEOUT_MS);
     });
@@ -396,6 +402,7 @@ app.post('/api/write', async (req, res) => {
       category: draft.category,
       tags: draft.tags,
       modelLabel,
+      referenceLinks,
     });
 
     return res.json({ ok: true, articleId, rowNumber: articleRowNumber, model: modelLabel });
