@@ -213,7 +213,7 @@ app.get('/api/candidates', async (req, res) => {
   }
 });
 
-// POST /api/candidates/status — 切換單一候選的狀態(待挑選／撰寫／之後撰寫／不要 四態)。
+// POST /api/candidates/status — 切換單一候選的狀態(已選／考慮／未決／棄用 四態)。
 app.post('/api/candidates/status', async (req, res) => {
   const { rowNumber, status } = req.body || {};
   const { STATUS_LIST, setCandidateStatus } = require('./candidates');
@@ -274,9 +274,28 @@ app.post('/api/candidates/research', async (req, res) => {
   }
 });
 
-// POST /api/candidates — 手動新增候選(走跟自動產出完全相同的後續流程)。
+// POST /api/candidates/parse — 手動新增第一步：AI 解析貼上的文字，只回傳結果不寫入 Sheet。
+app.post('/api/candidates/parse', async (req, res) => {
+  const { text } = req.body || {};
+
+  if (!text || typeof text !== 'string' || text.trim() === '') {
+    return res.status(400).json({ error: '缺少貼上的文字內容' });
+  }
+
+  try {
+    const { parseManualCandidateText } = require('./candidateParser');
+    const result = await parseManualCandidateText(text);
+    return res.json(result);
+  } catch (err) {
+    console.error('[candidates] AI 解析失敗：', err && err.message);
+    return res.status(500).json({ error: `AI 解析失敗：${err && err.message}` });
+  }
+});
+
+// POST /api/candidates — 手動新增第二步：人工在預覽表單確認/修改後才真正寫入 Sheet，
+// 走跟自動產出完全相同的後續流程。
 app.post('/api/candidates', async (req, res) => {
-  const { title, category, note, links } = req.body || {};
+  const { title, category, research, sourceLanguages, taiwanHook, links } = req.body || {};
   const { missingEnv } = require('./candidates');
   const { appendManualCandidate } = require('./research');
   const { CATEGORIES } = require('./prompts/researchPrompt');
@@ -297,7 +316,9 @@ app.post('/api/candidates', async (req, res) => {
     await appendManualCandidate({
       title: title.trim(),
       category: category || '',
-      note: typeof note === 'string' ? note.trim() : '',
+      research: typeof research === 'string' ? research.trim() : '',
+      sourceLanguages: typeof sourceLanguages === 'string' ? sourceLanguages.trim() : '',
+      taiwanHook: typeof taiwanHook === 'string' ? taiwanHook.trim() : '',
       referenceText: typeof links === 'string' ? links.trim() : '',
     });
     return res.json({ ok: true });

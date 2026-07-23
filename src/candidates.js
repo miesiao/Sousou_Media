@@ -13,15 +13,22 @@ const SHEET_TAB_NAME = '候選題目';
 // A 日期 / B 狀態 / C 分類 / D 題目 / E 研究說明 / F 主要語言來源 / G 台灣人興趣觸發點 / H 參考資料
 const DATA_RANGE = `${SHEET_TAB_NAME}!A2:H`;
 
-// 四態狀態常數(取代舊的「待挑選 / 已選」兩態)。STATUS_LIST 供前端下拉選單與驗證使用。
-const STATUS_PENDING = '待挑選';
-const STATUS_WRITE = '撰寫';
-const STATUS_LATER = '之後撰寫';
-const STATUS_SKIP = '不要';
-const STATUS_LIST = [STATUS_PENDING, STATUS_WRITE, STATUS_LATER, STATUS_SKIP];
+// 四態狀態常數。STATUS_LIST 供前端下拉選單與驗證使用。
+const STATUS_WRITE = '已選';   // 確定要撰寫
+const STATUS_LATER = '考慮';   // 不錯但不是現在，之後可能寫
+const STATUS_PENDING = '未決'; // 還沒判斷(研究段產出的預設值)
+const STATUS_SKIP = '棄用';    // 確定不寫
+const STATUS_LIST = [STATUS_WRITE, STATUS_LATER, STATUS_PENDING, STATUS_SKIP];
 
-// 舊資料相容：改版前寫入的「已選」一律視為「撰寫」讀取，不因為讀到舊值就壞掉。
-const LEGACY_STATUS_SELECTED = '已選';
+// 舊資料相容：改版前的狀態值讀取時自動對應到新四態，不因為讀到舊值就壞掉。
+// 注意「已選」本身就是新版 STATUS_WRITE 的字面值，兩個世代剛好同義，
+// 已經會被下面 STATUS_LIST.includes(raw) 那關直接放行，不需要另外列在對照表。
+const LEGACY_STATUS_MAP = {
+  待挑選: STATUS_PENDING,
+  撰寫: STATUS_WRITE,
+  之後撰寫: STATUS_LATER,
+  不要: STATUS_SKIP,
+};
 
 // 去重清單規則的參數(見 buildDedupTitleList)。
 const DEDUP_RECENT_MONTHS = 3;
@@ -32,22 +39,40 @@ const URL_REGEX = /https?:\/\/\S+/;
 
 /**
  * 把 Sheet 讀到的原始狀態值正規化成四態之一。
- * 未知/空值一律視為「待挑選」；舊版「已選」視為「撰寫」。
+ * 未知/空值一律視為「未決」；舊版狀態值依 LEGACY_STATUS_MAP 對應。
  * @param {string} raw
  * @returns {string}
  */
 function normalizeStatus(raw) {
-  if (raw === LEGACY_STATUS_SELECTED) return STATUS_WRITE;
   if (STATUS_LIST.includes(raw)) return raw;
+  if (Object.prototype.hasOwnProperty.call(LEGACY_STATUS_MAP, raw)) return LEGACY_STATUS_MAP[raw];
   return STATUS_PENDING;
 }
 
 /**
- * 解析「參考資料」欄位文字(src/research.js 寫入格式：每行「媒體名稱：網址」，
+ * 把「媒體名稱：文章標題」這種組合標籤拆成兩段，供前端分開套用粗體/分隔符樣式。
+ * 沒有冒號(例如來源沒有抓到文章標題時)就整段當媒體名稱、文章標題留空。
+ * @param {string} rawLabel
+ * @returns {{mediaLabel: string, articleTitle: string}}
+ */
+function splitReferenceLabel(rawLabel) {
+  const idx = rawLabel.search(/[：:]/);
+  if (idx === -1) {
+    return { mediaLabel: rawLabel, articleTitle: '' };
+  }
+  return {
+    mediaLabel: rawLabel.slice(0, idx).trim(),
+    articleTitle: rawLabel.slice(idx + 1).trim(),
+  };
+}
+
+/**
+ * 解析「參考資料」欄位文字(src/research.js 寫入格式：每行「媒體名稱：文章標題 網址」，
  * 或比對不到來源時的「來源未比對到...」備援清單)。
- * 抓出每行的網址部分(去掉媒體標籤)當作 sourceUrls，抓不到網址的行當作備註文字。
+ * 抓出每行的網址部分當作 sourceUrls(媒體名稱/文章標題分開存放，供前端分別套用樣式)，
+ * 抓不到網址的行當作備註文字。
  * @param {string} raw
- * @returns {{sourceUrls: Array<{label: string, url: string}>, note: string}}
+ * @returns {{sourceUrls: Array<{mediaLabel: string, articleTitle: string, url: string}>, note: string}}
  */
 function parseReferenceCell(raw) {
   const lines = String(raw || '')
@@ -65,8 +90,13 @@ function parseReferenceCell(raw) {
       continue;
     }
     const url = match[0];
-    const label = line.slice(0, match.index).replace(/[：:]\s*$/, '').trim();
-    sourceUrls.push({ label, url });
+    const rawLabel = line
+      .slice(0, match.index)
+      .replace(/[：:]\s*$/, '')
+      .replace(/^-\s*/, '') // 媒體名稱比對到多筆時的清單前綴(見 grounding.js buildMediaMatchText)
+      .trim();
+    const { mediaLabel, articleTitle } = splitReferenceLabel(rawLabel);
+    sourceUrls.push({ mediaLabel, articleTitle, url });
   }
 
   return { sourceUrls, note: noteLines.join(' ') };
@@ -100,7 +130,7 @@ function getSheetsClient() {
 /**
  * 讀取「候選題目」分頁全部候選(含 rowNumber，供更新狀態時定位列)。
  * 分頁尚未存在(研究段還沒執行過)時視為沒有候選，回傳空陣列而不是報錯。
- * @returns {Promise<Array<{rowNumber:number, date:string, status:string, category:string, title:string, research:string, sourceLanguages:string, taiwanHook:string, sourceUrls:Array<{label:string,url:string}>, referenceNote:string}>>}
+ * @returns {Promise<Array<{rowNumber:number, date:string, status:string, category:string, title:string, research:string, sourceLanguages:string, taiwanHook:string, sourceUrls:Array<{mediaLabel:string,articleTitle:string,url:string}>, referenceNote:string}>>}
  */
 async function listCandidates() {
   const missing = missingEnv();
@@ -191,9 +221,9 @@ function parseCandidateDate(dateStr) {
 /**
  * 算出研究段(排程與「再搜 N 則」皆適用)呼叫 Gemini 前要塞進 prompt 的既有題目清單，
  * 讓模型避開重複主題。規則：
- * - 納入：近 3 個月內的所有候選(不分狀態，含「不要」) ＋ 近 6 個月內狀態為
- *   「撰寫」「之後撰寫」的候選。
- * - 超過 150 則時，從最舊的「待挑選 / 不要」開始移除，保留「撰寫 / 之後撰寫」。
+ * - 納入：近 3 個月內的所有候選(不分狀態，含「棄用」) ＋ 近 6 個月內狀態為
+ *   「已選」「考慮」的候選。
+ * - 超過 150 則時，從最舊的「未決 / 棄用」開始移除，保留「已選 / 考慮」。
  * - 只回傳題目文字(不含研究說明)，避免 token 膨脹並稀釋重點。
  * @returns {Promise<string[]>}
  */
@@ -223,7 +253,7 @@ async function buildDedupTitleList() {
     return kept.map(({ item }) => item.title);
   }
 
-  // 超過上限：優先移除最舊的「待挑選 / 不要」，保留「撰寫 / 之後撰寫」。
+  // 超過上限：優先移除最舊的「未決 / 棄用」，保留「已選 / 考慮」。
   const protectedEntries = kept.filter(
     ({ item }) => item.status === STATUS_WRITE || item.status === STATUS_LATER
   );

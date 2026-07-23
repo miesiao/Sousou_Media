@@ -2,8 +2,8 @@
 
 // 隅消息上稿系統 — 研究段
 // 呼叫 Gemini API(含 Google 搜尋 grounding)找出「南方」相關新聞素材，寫入 Google Sheet
-// 的「候選題目」分頁，狀態欄固定填「待挑選」。這一段不接撰寫，純粹產出候選讓人工挑選；
-// 只有被人工把狀態改成「撰寫」的列，之後的撰寫段才會讀取(撰寫段尚未實作)。
+// 的「候選題目」分頁，狀態欄固定填「未決」。這一段不接撰寫，純粹產出候選讓人工挑選；
+// 只有被人工把狀態改成「已選」的列，之後的撰寫段才會讀取(撰寫段尚未實作)。
 //
 // 可獨立執行(排程用，固定產出 CANDIDATE_COUNT 則)：node src/research.js
 // 網頁「再搜 N 則」按鈕跟手動新增則呼叫本檔匯出的 generateCandidates() / appendManualCandidate()。
@@ -15,7 +15,7 @@ require('dotenv').config();
 const { google } = require('googleapis');
 const { getAuthClient, missingAuthEnv } = require('./googleAuth');
 const { buildResearchPrompt, buildExtractionPrompt, CANDIDATE_COUNT } = require('./prompts/researchPrompt');
-const { STATUS_WRITE, buildDedupTitleList } = require('./candidates');
+const { STATUS_PENDING, STATUS_WRITE, buildDedupTitleList } = require('./candidates');
 const {
   extractGroundingSources,
   resolveAllRedirects,
@@ -43,7 +43,7 @@ const CONTENT_MATCH_TIMEOUT_MS = 30000;
 const SHEET_TAB_NAME = '候選題目';
 const SHEET_HEADER = ['日期', '狀態', '分類', '題目', '研究說明', '主要語言來源', '台灣人興趣觸發點', '參考資料'];
 const SHEET_RANGE = `${SHEET_TAB_NAME}!A:H`;
-const DEFAULT_STATUS = '待挑選';
+const DEFAULT_STATUS = STATUS_PENDING;
 
 /**
  * 檢查研究段所需的環境變數。
@@ -407,7 +407,7 @@ async function ensureResearchTab(sheets) {
 }
 
 /**
- * 將候選清單各寫成一列，附加到「候選題目」分頁(狀態固定「待挑選」)。
+ * 將候選清單各寫成一列，附加到「候選題目」分頁(狀態固定「未決」)。
  * @param {Array<{category: string, title: string, research: string, sourceLanguages: string, taiwanHook: string, referenceText: string}>} items
  * @returns {Promise<void>}
  */
@@ -472,21 +472,25 @@ async function generateCandidates(count) {
 
 /**
  * 手動新增單一候選(走跟自動產出完全相同的 Sheet 寫入流程)。
- * 狀態固定「撰寫」、日期填當天；不新增欄位，來源用研究說明欄前綴「【手動新增】」辨識。
- * @param {{title: string, category?: string, note?: string, referenceText?: string}} input
+ * 前面已經由 src/candidateParser.js 的 AI 解析 + 人工在預覽表單確認/修改過，
+ * 這裡只負責照固定欄位順序寫入一列。狀態固定「已選」、日期填當天；不新增欄位，
+ * 研究說明欄前綴「【手動新增】」以便辨識來源。
+ * @param {{title: string, category?: string, research?: string, sourceLanguages?: string, taiwanHook?: string, referenceText?: string}} input
  * @returns {Promise<void>}
  */
 async function appendManualCandidate(input) {
   const title = (input && input.title) || '';
   const category = (input && input.category) || '';
-  const note = (input && input.note) || '';
+  const research = (input && input.research) || '';
+  const sourceLanguages = (input && input.sourceLanguages) || '';
+  const taiwanHook = (input && input.taiwanHook) || '';
   const referenceText = (input && input.referenceText) || '';
 
   const sheets = getSheetsClient();
   await ensureResearchTab(sheets);
 
   const today = getTodayDash();
-  const research = note ? `【手動新增】${note}` : '【手動新增】';
+  const researchWithTag = research ? `【手動新增】${research}` : '【手動新增】';
 
   await sheets.spreadsheets.values.append({
     spreadsheetId: process.env.SHEET_ID,
@@ -494,7 +498,7 @@ async function appendManualCandidate(input) {
     valueInputOption: 'RAW',
     insertDataOption: 'INSERT_ROWS',
     requestBody: {
-      values: [[today, STATUS_WRITE, category, title, research, '', '', referenceText]],
+      values: [[today, STATUS_WRITE, category, title, researchWithTag, sourceLanguages, taiwanHook, referenceText]],
     },
   });
 }
