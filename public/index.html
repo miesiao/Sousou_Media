@@ -1453,14 +1453,14 @@
       el.candidateEmpty.classList.remove('hidden');
     } else {
       el.candidateEmpty.classList.add('hidden');
-      el.candidateGrid.innerHTML = state.candidates.map(renderCandidateCard).join('');
+      el.candidateGrid.innerHTML = state.candidates.map(renderImageCandidateCard).join('');
     }
 
     updateSelectionSummary();
     bindCandidateCardEvents();
   }
 
-  function renderCandidateCard(c) {
+  function renderImageCandidateCard(c) {
     var selectedIndex = state.selectedOrder.indexOf(c.id);
     var isSelected = selectedIndex !== -1;
     var orderNum = selectedIndex + 1;
@@ -1894,7 +1894,7 @@
     return [];
   }
 
-  function renderCandidateCard(item) {
+  function renderTopicCandidateCard(item) {
     var cardClasses = 'candidate-card2 ' + statusColorClass(item.status);
     if (item.status === '棄用') cardClasses += ' faded';
 
@@ -2025,7 +2025,7 @@
     el.candidatesEmpty.classList.add('hidden');
 
     var visible = isRandomView ? items : items.slice(0, state.candidatesVisibleCount);
-    el.candidatesCards.innerHTML = visible.map(renderCandidateCard).join('');
+    el.candidatesCards.innerHTML = visible.map(renderTopicCandidateCard).join('');
     bindCardEvents();
 
     var hasMore = !isRandomView && visible.length < items.length;
