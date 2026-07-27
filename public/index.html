@@ -660,14 +660,23 @@
   }
   .candidate-item-urls a:hover { text-decoration: underline; }
 
-  /* ---- 撰寫段：候選卡片「開始撰寫」按鈕 ---- */
+  /* ---- 撰寫段：候選卡片「開始撰寫」按鈕（置中，配色與 [已選] 狀態按鈕一致） ---- */
   .write-actions {
     display: flex;
-    gap: 8px;
+    gap: 10px;
     flex-wrap: wrap;
-    margin-bottom: 12px;
+    justify-content: center;
+    margin-top: 14px;
+    margin-bottom: 4px;
   }
-  .write-actions .btn { font-size: 12.5px; padding: 7px 12px; }
+  .btn-write {
+    font-size: 12.5px;
+    padding: 7px 14px;
+    background: var(--color-primary);
+    color: #fff;
+    border: 1px solid var(--color-primary);
+  }
+  .btn-write:hover:not(:disabled) { background: var(--color-primary-hover); border-color: var(--color-primary-hover); }
 
   /* ---- 撰寫段：撰寫中頁面(左欄卡片清單 + 右欄檢視/編輯) ---- */
   .drafts-split {
@@ -1937,8 +1946,8 @@
         '<div class="candidate-item-research">' + escapeHtml(item.research) + '</div>' +
         (item.taiwanHook ? '<div class="candidate-item-hook">💡 ' + escapeHtml(item.taiwanHook) + '</div>' : '') +
         noteHtml +
-        writeActionsHtml +
         '<div class="candidate-item-urls">' + urlsHtml + '</div>' +
+        writeActionsHtml +
       '</div>';
   }
 
