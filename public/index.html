@@ -948,6 +948,10 @@
               <textarea id="manual-preview-hook" style="min-height:80px;"></textarea>
             </div>
             <div class="field">
+              <label for="manual-preview-event-date">事件時間點（選填；沒有明確時間點可留空）</label>
+              <input type="text" id="manual-preview-event-date" placeholder="例如：2026-03、2019年" />
+            </div>
+            <div class="field">
               <label for="manual-preview-links">參考連結（每行一個；只會是貼上文字中實際出現過的網址）</label>
               <textarea id="manual-preview-links" style="min-height:80px;"></textarea>
             </div>
@@ -1157,6 +1161,7 @@
     manualPreviewResearch: document.getElementById('manual-preview-research'),
     manualPreviewLanguages: document.getElementById('manual-preview-languages'),
     manualPreviewHook: document.getElementById('manual-preview-hook'),
+    manualPreviewEventDate: document.getElementById('manual-preview-event-date'),
     manualPreviewLinks: document.getElementById('manual-preview-links'),
     btnManualConfirm: document.getElementById('btn-manual-confirm'),
     btnManualBack: document.getElementById('btn-manual-back'),
@@ -1936,6 +1941,9 @@
     if (item.date) metaHtml += '<span class="helper-text candidate-item-date">' + escapeHtml(item.date) + '</span>';
     if (item.category) metaHtml += '<span class="chip">' + escapeHtml(item.category) + '</span>';
     if (item.sourceLanguages) metaHtml += '<span class="chip">' + escapeHtml(formatLanguages(item.sourceLanguages)) + '</span>';
+    // item.date 是這則候選「被研究出來」的日期，item.eventDate 是主題本身綁定的事件時間點
+    // (研究段判讀，沒把握就留空)，兩者意義不同，這裡加「事件：」前綴避免使用者混淆。
+    if (item.eventDate) metaHtml += '<span class="chip">事件：' + escapeHtml(item.eventDate) + '</span>';
 
     var buttonsHtml = STATUS_DISPLAY_ORDER.map(function (s) {
       var active = s === item.status;
@@ -2145,6 +2153,7 @@
         el.manualPreviewResearch.value = data.research || '';
         el.manualPreviewLanguages.value = data.sourceLanguages || '';
         el.manualPreviewHook.value = data.taiwanHook || '';
+        el.manualPreviewEventDate.value = data.eventDate || '';
         el.manualPreviewLinks.value = Array.isArray(data.referenceUrls) ? data.referenceUrls.join('\n') : '';
         el.manualStepPaste.classList.add('hidden');
         el.manualStepPreview.classList.remove('hidden');
@@ -2181,6 +2190,7 @@
         research: el.manualPreviewResearch.value.trim(),
         sourceLanguages: el.manualPreviewLanguages.value.trim(),
         taiwanHook: el.manualPreviewHook.value.trim(),
+        eventDate: el.manualPreviewEventDate.value.trim(),
         links: el.manualPreviewLinks.value.trim()
       }
     })

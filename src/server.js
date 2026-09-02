@@ -298,7 +298,7 @@ app.post('/api/candidates/parse', async (req, res) => {
 // POST /api/candidates — 手動新增第二步：人工在預覽表單確認/修改後才真正寫入 Sheet，
 // 走跟自動產出完全相同的後續流程。
 app.post('/api/candidates', async (req, res) => {
-  const { title, category, research, sourceLanguages, taiwanHook, links } = req.body || {};
+  const { title, category, research, sourceLanguages, taiwanHook, links, eventDate } = req.body || {};
   const { missingEnv } = require('./candidates');
   const { appendManualCandidate } = require('./research');
   const { CATEGORIES } = require('./prompts/researchPrompt');
@@ -323,6 +323,7 @@ app.post('/api/candidates', async (req, res) => {
       sourceLanguages: typeof sourceLanguages === 'string' ? sourceLanguages.trim() : '',
       taiwanHook: typeof taiwanHook === 'string' ? taiwanHook.trim() : '',
       referenceText: typeof links === 'string' ? links.trim() : '',
+      eventDate: typeof eventDate === 'string' ? eventDate.trim() : '',
     });
     return res.json({ ok: true });
   } catch (err) {
@@ -386,6 +387,7 @@ app.post('/api/write', async (req, res) => {
           research: candidate.research,
           sourceLanguages: candidate.sourceLanguages,
           taiwanHook: candidate.taiwanHook,
+          eventDate: candidate.eventDate,
           mediaNames,
         },
         model,

@@ -13,7 +13,7 @@
 // 這裡延續同樣的做法。)
 
 const Anthropic = require('@anthropic-ai/sdk');
-const { CATEGORIES } = require('./prompts/researchPrompt');
+const { CATEGORIES, EVENT_DATE_RULE } = require('./prompts/researchPrompt');
 
 const MODEL_ID = 'claude-haiku-4-5-20251001';
 const MAX_INPUT_LENGTH = 6000;
@@ -70,18 +70,21 @@ ${truncatedText}
 - research：研究說明(整理、改寫原始文字的重點，可補充背景，200-400 字)
 - sourceLanguages：這則新聞/題材主要語言來源的推測(例如「英文」「西班牙文」；不確定就填「不明」)
 - taiwanHook：台灣人興趣觸發點(簡述為何這件事能引發台灣讀者的共鳴或好奇)
+- eventDate：事件時間點。原始文字裡沒有明確提到、或這個主題本來就沒有時間點，一律填空字串 ""，不要自己推算或編造。
+
+${EVENT_DATE_RULE}
 
 以上欄位一律使用繁體中文全形標點(，。「」：；？！)，不要使用半形標點符號。
 
 只回傳一個 JSON 物件，不要有任何說明文字、不要用 markdown 條列、不要用任何 code fence，格式如下：
-{"category":"...","title":"...","research":"...","sourceLanguages":"...","taiwanHook":"..."}`;
+{"category":"...","title":"...","research":"...","sourceLanguages":"...","taiwanHook":"...","eventDate":"..."}`;
 }
 
 /**
  * 呼叫 Claude Haiku，把使用者貼上的原始文字解析成候選題目欄位。
  * referenceUrls 完全不經過模型，直接從 rawText 用正規表示式抓出。
  * @param {string} rawText 使用者貼上的原始文字
- * @returns {Promise<{category: string, title: string, research: string, sourceLanguages: string, taiwanHook: string, referenceUrls: string[]}>}
+ * @returns {Promise<{category: string, title: string, research: string, sourceLanguages: string, taiwanHook: string, eventDate: string, referenceUrls: string[]}>}
  */
 async function parseManualCandidateText(rawText) {
   const apiKey = process.env.ANTHROPIC_API_KEY;
@@ -132,8 +135,9 @@ async function parseManualCandidateText(rawText) {
   const research = typeof parsed.research === 'string' ? parsed.research.trim() : '';
   const sourceLanguages = typeof parsed.sourceLanguages === 'string' ? parsed.sourceLanguages.trim() : '';
   const taiwanHook = typeof parsed.taiwanHook === 'string' ? parsed.taiwanHook.trim() : '';
+  const eventDate = typeof parsed.eventDate === 'string' ? parsed.eventDate.trim() : '';
 
-  return { category, title, research, sourceLanguages, taiwanHook, referenceUrls };
+  return { category, title, research, sourceLanguages, taiwanHook, eventDate, referenceUrls };
 }
 
 module.exports = {

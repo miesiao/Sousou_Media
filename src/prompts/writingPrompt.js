@@ -88,8 +88,8 @@ ${CATEGORIES.join('、')}
 
 /**
  * 使用者提示：帶入單一候選題目的資料(題目、分類、研究說明、主要語言來源、
- * 台灣人興趣觸發點、參考資料的媒體名)。參考資料只給媒體名稱，不給網址。
- * @param {{title:string, category?:string, research?:string, sourceLanguages?:string, taiwanHook?:string, mediaNames?:string[]}} input
+ * 台灣人興趣觸發點、事件時間點、參考資料的媒體名)。參考資料只給媒體名稱，不給網址。
+ * @param {{title:string, category?:string, research?:string, sourceLanguages?:string, taiwanHook?:string, eventDate?:string, mediaNames?:string[]}} input
  * @returns {string}
  */
 function buildWritingUserPrompt(input) {
@@ -98,8 +98,15 @@ function buildWritingUserPrompt(input) {
   const research = (input && input.research) || '(無研究說明)';
   const sourceLanguages = (input && input.sourceLanguages) || '(未標示)';
   const taiwanHook = (input && input.taiwanHook) || '(未標示)';
+  const eventDate = (input && input.eventDate) || '';
   const mediaNames = Array.isArray(input && input.mediaNames) ? input.mediaNames.filter(Boolean) : [];
   const mediaText = mediaNames.length > 0 ? mediaNames.join('、') : '(無參考媒體資訊)';
+
+  // eventDate 只在研究段有把握判斷出時才會有值(沒有把握就留空，不是模型自己算的)，
+  // 有值時直接把這個時間點交給撰寫模型引用，不要讓它自己重新推算或憑印象編造年份。
+  const eventDateBlock = eventDate
+    ? `\n【事件時間點(已查證，行文可直接引用，不要自己另外推算)】${eventDate}\n`
+    : '';
 
   return `請依據以下候選題目資料，撰寫一篇完整文章初稿：
 
@@ -110,7 +117,7 @@ ${research}
 
 【主要語言來源】${sourceLanguages}
 【台灣人興趣觸發點】${taiwanHook}
-【參考資料媒體名稱】${mediaText}
+${eventDateBlock}【參考資料媒體名稱】${mediaText}
 
 請直接輸出符合上述系統提示規定格式的完整成品，不要輸出任何說明文字。`;
 }

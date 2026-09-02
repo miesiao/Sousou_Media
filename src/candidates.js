@@ -10,8 +10,8 @@ const { getAuthClient, missingAuthEnv } = require('./googleAuth');
 
 const SHEET_TAB_NAME = '候選題目';
 // 欄位順序需與 src/research.js 的 SHEET_HEADER 保持一致：
-// A 日期 / B 狀態 / C 分類 / D 題目 / E 研究說明 / F 主要語言來源 / G 台灣人興趣觸發點 / H 參考資料
-const DATA_RANGE = `${SHEET_TAB_NAME}!A2:H`;
+// A 日期 / B 狀態 / C 分類 / D 題目 / E 研究說明 / F 主要語言來源 / G 台灣人興趣觸發點 / H 參考資料 / I 事件時間點
+const DATA_RANGE = `${SHEET_TAB_NAME}!A2:I`;
 
 // 四態狀態常數。STATUS_LIST 供前端下拉選單與驗證使用。
 const STATUS_WRITE = '已選';   // 確定要撰寫
@@ -138,7 +138,7 @@ function getSheetsClient() {
 /**
  * 讀取「候選題目」分頁全部候選(含 rowNumber，供更新狀態時定位列)。
  * 分頁尚未存在(研究段還沒執行過)時視為沒有候選，回傳空陣列而不是報錯。
- * @returns {Promise<Array<{rowNumber:number, date:string, status:string, category:string, title:string, research:string, sourceLanguages:string, taiwanHook:string, sourceUrls:Array<{mediaLabel:string,articleTitle:string,url:string,publishedDate:string}>, referenceNote:string}>>}
+ * @returns {Promise<Array<{rowNumber:number, date:string, status:string, category:string, title:string, research:string, sourceLanguages:string, taiwanHook:string, sourceUrls:Array<{mediaLabel:string,articleTitle:string,url:string,publishedDate:string}>, referenceNote:string, eventDate:string}>>}
  */
 async function listCandidates() {
   const missing = missingEnv();
@@ -167,7 +167,7 @@ async function listCandidates() {
   return rows
     .map((row, i) => {
       const rowNumber = i + 2; // A2 起算
-      const [date, status, category, title, research, sourceLanguages, taiwanHook, referenceRaw] = row;
+      const [date, status, category, title, research, sourceLanguages, taiwanHook, referenceRaw, eventDate] = row;
 
       if (!title || !String(title).trim()) {
         return null; // 跳過空列
@@ -186,6 +186,7 @@ async function listCandidates() {
         taiwanHook: taiwanHook || '',
         sourceUrls,
         referenceNote: note,
+        eventDate: eventDate || '', // I 欄，主題本身綁定的時間點(不是這一列被研究出來的日期，那個是 date)
       };
     })
     .filter(Boolean);

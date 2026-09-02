@@ -41,8 +41,11 @@ const CONTENT_MATCH_MODEL = 'gemini-3.5-flash-lite';
 const CONTENT_MATCH_TIMEOUT_MS = 30000;
 
 const SHEET_TAB_NAME = '候選題目';
-const SHEET_HEADER = ['日期', '狀態', '分類', '題目', '研究說明', '主要語言來源', '台灣人興趣觸發點', '參考資料'];
-const SHEET_RANGE = `${SHEET_TAB_NAME}!A:H`;
+// I欄「事件時間點」是後來新增的第 9 欄；ensureResearchTab() 對舊版(只有 A-H 8 欄表頭)的
+// 試算表做了專門的「原地補欄」升級路徑，不會用一般的表頭不符處理邏輯(那個邏輯會插入新的一列，
+// 對「單純少一欄」的情況來說會把舊表頭誤判成資料列，見該函式內註解)。
+const SHEET_HEADER = ['日期', '狀態', '分類', '題目', '研究說明', '主要語言來源', '台灣人興趣觸發點', '參考資料', '事件時間點'];
+const SHEET_RANGE = `${SHEET_TAB_NAME}!A:I`;
 const DEFAULT_STATUS = STATUS_PENDING;
 
 /**
@@ -213,7 +216,7 @@ async function matchSourcesToCandidatesByContent(items, enrichedSources) {
  * 注意：不再要求 sourceMedia 非空才收——連結/來源比對是後續 attachReferenceText()
  * 的工作，這裡的閘門只確保「至少有題目可看」，避免因為模型沒填媒體名稱就整批漏掉好題目。
  * @param {string} rawText
- * @returns {Array<{category: string, title: string, research: string, sourceLanguages: string, taiwanHook: string, sourceMedia: string[]}>}
+ * @returns {Array<{category: string, title: string, research: string, sourceLanguages: string, taiwanHook: string, sourceMedia: string[], eventDate: string}>}
  */
 function parseCandidates(rawText) {
   const cleaned = stripCodeFence(rawText);
@@ -241,6 +244,7 @@ function parseCandidates(rawText) {
     const sourceLanguages =
       typeof raw.sourceLanguages === 'string' ? raw.sourceLanguages.trim() : '';
     const taiwanHook = typeof raw.taiwanHook === 'string' ? raw.taiwanHook.trim() : '';
+    const eventDate = typeof raw.eventDate === 'string' ? raw.eventDate.trim() : '';
 
     const sourceMedia = Array.isArray(raw.sourceMedia)
       ? raw.sourceMedia
@@ -248,7 +252,7 @@ function parseCandidates(rawText) {
           .map((media) => media.trim())
       : [];
 
-    items.push({ category, title, research, sourceLanguages, taiwanHook, sourceMedia });
+    items.push({ category, title, research, sourceLanguages, taiwanHook, sourceMedia, eventDate });
   }
 
   return items;
@@ -356,7 +360,7 @@ async function ensureResearchTab(sheets) {
 
     await sheets.spreadsheets.values.update({
       spreadsheetId: process.env.SHEET_ID,
-      range: `${SHEET_TAB_NAME}!A1:H1`,
+      range: `${SHEET_TAB_NAME}!A1:I1`,
       valueInputOption: 'RAW',
       requestBody: { values: [SHEET_HEADER] },
     });
@@ -365,12 +369,32 @@ async function ensureResearchTab(sheets) {
 
   const headerRow = await sheets.spreadsheets.values.get({
     spreadsheetId: process.env.SHEET_ID,
-    range: `${SHEET_TAB_NAME}!A1:H1`,
+    range: `${SHEET_TAB_NAME}!A1:I1`,
   });
   const currentFirstRow = (headerRow.data.values && headerRow.data.values[0]) || [];
 
   const headerMatches = SHEET_HEADER.every((col, i) => currentFirstRow[i] === col);
   if (headerMatches) {
+    return;
+  }
+
+  // 欄位擴充升級路徑：如果目前表頭剛好是新表頭去掉最後幾欄的舊版本(逐欄比對都對得上，
+  // 只是欄位數比現在少，例如舊版只到 H 欄「參考資料」，新版加了 I 欄「事件時間點」)，
+  // 代表單純是欄位擴充，只要把表頭那一列直接補齊成新表頭即可。不能套用下面「插入一列」
+  // 的邏輯——那是為了「第一列其實是資料、表頭整個遺失」設計的，用在這裡會把舊表頭
+  // 誤判成一筆候選資料插進清單最前面。
+  const isPureExtension =
+    currentFirstRow.length > 0 &&
+    currentFirstRow.length < SHEET_HEADER.length &&
+    currentFirstRow.every((cell, i) => cell === SHEET_HEADER[i]);
+
+  if (isPureExtension) {
+    await sheets.spreadsheets.values.update({
+      spreadsheetId: process.env.SHEET_ID,
+      range: `${SHEET_TAB_NAME}!A1:I1`,
+      valueInputOption: 'RAW',
+      requestBody: { values: [SHEET_HEADER] },
+    });
     return;
   }
 
@@ -401,7 +425,7 @@ async function ensureResearchTab(sheets) {
 
   await sheets.spreadsheets.values.update({
     spreadsheetId: process.env.SHEET_ID,
-    range: `${SHEET_TAB_NAME}!A1:H1`,
+    range: `${SHEET_TAB_NAME}!A1:I1`,
     valueInputOption: 'RAW',
     requestBody: { values: [SHEET_HEADER] },
   });
@@ -409,7 +433,7 @@ async function ensureResearchTab(sheets) {
 
 /**
  * 將候選清單各寫成一列，附加到「候選題目」分頁(狀態固定「未決」)。
- * @param {Array<{category: string, title: string, research: string, sourceLanguages: string, taiwanHook: string, referenceText: string}>} items
+ * @param {Array<{category: string, title: string, research: string, sourceLanguages: string, taiwanHook: string, referenceText: string, eventDate?: string}>} items
  * @returns {Promise<void>}
  */
 async function appendCandidates(items) {
@@ -426,6 +450,7 @@ async function appendCandidates(items) {
     item.sourceLanguages,
     item.taiwanHook,
     item.referenceText || '',
+    item.eventDate || '',
   ]);
 
   await sheets.spreadsheets.values.append({
@@ -476,7 +501,7 @@ async function generateCandidates(count) {
  * 前面已經由 src/candidateParser.js 的 AI 解析 + 人工在預覽表單確認/修改過，
  * 這裡只負責照固定欄位順序寫入一列。狀態固定「已選」、日期填當天；不新增欄位，
  * 研究說明欄前綴「【手動新增】」以便辨識來源。
- * @param {{title: string, category?: string, research?: string, sourceLanguages?: string, taiwanHook?: string, referenceText?: string}} input
+ * @param {{title: string, category?: string, research?: string, sourceLanguages?: string, taiwanHook?: string, referenceText?: string, eventDate?: string}} input
  * @returns {Promise<void>}
  */
 async function appendManualCandidate(input) {
@@ -486,6 +511,7 @@ async function appendManualCandidate(input) {
   const sourceLanguages = (input && input.sourceLanguages) || '';
   const taiwanHook = (input && input.taiwanHook) || '';
   const referenceText = (input && input.referenceText) || '';
+  const eventDate = (input && input.eventDate) || '';
 
   const sheets = getSheetsClient();
   await ensureResearchTab(sheets);
@@ -499,7 +525,7 @@ async function appendManualCandidate(input) {
     valueInputOption: 'RAW',
     insertDataOption: 'INSERT_ROWS',
     requestBody: {
-      values: [[today, STATUS_WRITE, category, title, researchWithTag, sourceLanguages, taiwanHook, referenceText]],
+      values: [[today, STATUS_WRITE, category, title, researchWithTag, sourceLanguages, taiwanHook, referenceText, eventDate]],
     },
   });
 }
