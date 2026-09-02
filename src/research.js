@@ -281,6 +281,7 @@ async function attachReferenceText(items, groundingMetadata) {
       ...source,
       resolvedUri,
       pageTitle: info.pageTitle || null,
+      publishedDate: info.publishedDate || null,
       hostname: hostnameFromUrl(resolvedUri),
     };
   });

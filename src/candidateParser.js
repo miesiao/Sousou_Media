@@ -71,6 +71,8 @@ ${truncatedText}
 - sourceLanguages：這則新聞/題材主要語言來源的推測(例如「英文」「西班牙文」；不確定就填「不明」)
 - taiwanHook：台灣人興趣觸發點(簡述為何這件事能引發台灣讀者的共鳴或好奇)
 
+以上欄位一律使用繁體中文全形標點(，。「」：；？！)，不要使用半形標點符號。
+
 只回傳一個 JSON 物件，不要有任何說明文字、不要用 markdown 條列、不要用任何 code fence，格式如下：
 {"category":"...","title":"...","research":"...","sourceLanguages":"...","taiwanHook":"..."}`;
 }

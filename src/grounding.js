@@ -94,17 +94,77 @@ function decodeHtmlEntities(str) {
     .replace(/&#x([0-9a-f]+);/gi, (_, n) => String.fromCodePoint(parseInt(n, 16)));
 }
 
+// 常見文章發布日期的 meta 標籤鍵名(property/name/itemprop 皆可能用到，不分大小寫比對)。
+const DATE_META_KEYS = [
+  'article:published_time', 'article:modified_time', 'og:published_time',
+  'pubdate', 'publishdate', 'publish-date', 'date', 'dc.date', 'dc.date.issued',
+  'datepublished', 'sailthru.date', 'parsely-pub-date',
+];
+
 /**
- * 從 ReadableStream 邊讀邊找 <title>...</title>，找到就停止(不用整頁讀完)；
- * 讀滿 maxBytes 還沒找到、或串流結束都回傳 null(找不到標題)。
+ * 從一段 HTML 文字裡找發布日期：依序嘗試 <meta> 標籤(property/name/itemprop 任一屬性
+ * 命中 DATE_META_KEYS)、<time datetime="...">、JSON-LD 的 "datePublished"。
+ * 找不到回傳 null，交由呼叫端標記為「日期不明」，不強行猜測。
+ * @param {string} html
+ * @returns {string|null} 原始日期字串(尚未正規化)
+ */
+function extractDateFromHtml(html) {
+  const metaTags = html.match(/<meta\b[^>]*>/gi) || [];
+  const keyRegex = /(?:property|name|itemprop)\s*=\s*["']([^"']+)["']/i;
+  const contentRegex = /content\s*=\s*["']([^"']*)["']/i;
+
+  for (const tag of metaTags) {
+    const keyMatch = tag.match(keyRegex);
+    const contentMatch = tag.match(contentRegex);
+    if (!keyMatch || !contentMatch || !contentMatch[1]) continue;
+    if (DATE_META_KEYS.includes(keyMatch[1].trim().toLowerCase())) {
+      return contentMatch[1];
+    }
+  }
+
+  const timeMatch = html.match(/<time\b[^>]*\bdatetime\s*=\s*["']([^"']+)["']/i);
+  if (timeMatch) return timeMatch[1];
+
+  const ldJsonMatch = html.match(/"datePublished"\s*:\s*"([^"]+)"/i);
+  if (ldJsonMatch) return ldJsonMatch[1];
+
+  return null;
+}
+
+/**
+ * 把抓到的原始日期字串正規化成 YYYY-MM-DD；解析不出來回傳 null(交由呼叫端標記為不明)。
+ * @param {string|null} raw
+ * @returns {string|null}
+ */
+function normalizePublishedDate(raw) {
+  if (!raw) return null;
+  const trimmed = String(raw).trim();
+  if (!trimmed) return null;
+
+  const isoMatch = trimmed.match(/^(\d{4}-\d{2}-\d{2})/);
+  if (isoMatch) return isoMatch[1];
+
+  const parsed = new Date(trimmed);
+  if (!isNaN(parsed.getTime())) {
+    return parsed.toISOString().slice(0, 10);
+  }
+
+  return null;
+}
+
+/**
+ * 從 ReadableStream 邊讀邊找 <title>...</title> 與發布日期，兩者都找到或讀滿
+ * maxBytes(或串流結束)就停止；找不到的部分回傳 null，不強行猜測。
  * @param {ReadableStream} body
  * @param {number} maxBytes
- * @returns {Promise<string|null>}
+ * @returns {Promise<{title: string|null, publishedDate: string|null}>}
  */
-async function readTitleFromBody(body, maxBytes) {
+async function readPageMetaFromBody(body, maxBytes) {
   const reader = body.getReader();
   const chunks = [];
   let received = 0;
+  let title = null;
+  let publishedDateRaw = null;
 
   try {
     for (;;) {
@@ -115,17 +175,24 @@ async function readTitleFromBody(body, maxBytes) {
       received += value.length;
 
       const partial = Buffer.concat(chunks).toString('utf8');
-      const match = partial.match(/<title[^>]*>([\s\S]*?)<\/title>/i);
-      if (match) {
-        // 有些頁面的 <title> 內含換行/多個空白(排版用)，收斂成單一空白避免 Sheet 裡顯示凌亂。
-        const title = decodeHtmlEntities(match[1]).replace(/\s+/g, ' ').trim();
-        return title || null;
+
+      if (!title) {
+        const match = partial.match(/<title[^>]*>([\s\S]*?)<\/title>/i);
+        if (match) {
+          // 有些頁面的 <title> 內含換行/多個空白(排版用)，收斂成單一空白避免 Sheet 裡顯示凌亂。
+          title = decodeHtmlEntities(match[1]).replace(/\s+/g, ' ').trim() || null;
+        }
       }
 
+      if (!publishedDateRaw) {
+        publishedDateRaw = extractDateFromHtml(partial);
+      }
+
+      if (title && publishedDateRaw) break;
       if (received >= maxBytes) break;
     }
   } catch (err) {
-    // 讀取中斷(逾時/連線中斷)一律視為找不到標題，不 throw。
+    // 讀取中斷(逾時/連線中斷)一律視為找不到，不 throw，保留已經找到的部分。
   } finally {
     try {
       await reader.cancel();
@@ -134,15 +201,15 @@ async function readTitleFromBody(body, maxBytes) {
     }
   }
 
-  return null;
+  return { title, publishedDate: normalizePublishedDate(publishedDateRaw) };
 }
 
 /**
- * 跟隨重導向解開單一 grounding 來源網址，並嘗試抓取頁面 <title>。
- * 解不開(逾時/網路錯誤/任何例外)一律退回原始 uri、標題設為 null，不讓整批解析失敗；
- * 抓不到標題(403、非 HTML、逾時)也保留網址，不因此丟棄該來源。
+ * 跟隨重導向解開單一 grounding 來源網址，並嘗試抓取頁面 <title> 與發布日期。
+ * 解不開(逾時/網路錯誤/任何例外)一律退回原始 uri、標題與日期設為 null，不讓整批解析失敗；
+ * 抓不到(403、非 HTML、逾時、頁面沒有標註日期)也保留網址，不因此丟棄該來源。
  * @param {string} uri
- * @returns {Promise<{resolvedUri: string, pageTitle: string|null}>}
+ * @returns {Promise<{resolvedUri: string, pageTitle: string|null, publishedDate: string|null}>}
  */
 async function resolveRedirectUrl(uri) {
   const controller = new AbortController();
@@ -159,15 +226,18 @@ async function resolveRedirectUrl(uri) {
     const contentType = response.headers.get('content-type') || '';
 
     let pageTitle = null;
+    let publishedDate = null;
     if (response.body && /text\/html/i.test(contentType)) {
-      pageTitle = await readTitleFromBody(response.body, MAX_TITLE_FETCH_BYTES);
+      const meta = await readPageMetaFromBody(response.body, MAX_TITLE_FETCH_BYTES);
+      pageTitle = meta.title;
+      publishedDate = meta.publishedDate;
     } else if (response.body && typeof response.body.cancel === 'function') {
       response.body.cancel().catch(() => {});
     }
 
-    return { resolvedUri, pageTitle };
+    return { resolvedUri, pageTitle, publishedDate };
   } catch (err) {
-    return { resolvedUri: uri, pageTitle: null };
+    return { resolvedUri: uri, pageTitle: null, publishedDate: null };
   } finally {
     clearTimeout(timer);
   }
@@ -176,7 +246,7 @@ async function resolveRedirectUrl(uri) {
 /**
  * 併發解開多個來源網址(同時最多 REDIRECT_CONCURRENCY 個)，回傳與輸入同順序的結果陣列。
  * @param {Array<{uri: string}>} sources
- * @returns {Promise<Array<{resolvedUri: string, pageTitle: string|null}>>}
+ * @returns {Promise<Array<{resolvedUri: string, pageTitle: string|null, publishedDate: string|null}>>}
  */
 async function resolveAllRedirects(sources) {
   const resolved = new Array(sources.length);
@@ -260,17 +330,21 @@ function mediaMatchesSource(mediaName, source) {
 }
 
 /**
- * 格式化單一來源為一行文字：有文章標題就「標籤：文章標題 網址」，沒有就「標籤：網址」。
- * @param {{resolvedUri: string, pageTitle: string|null}} source
+ * 格式化單一來源為一行文字：有文章標題就「標籤：文章標題 網址」，沒有就「標籤：網址」，
+ * 結尾一律加上「｜發布日期：YYYY-MM-DD」(抓不到日期就標「unknown date」)。
+ * 這個「｜發布日期：」結尾是固定格式，src/candidates.js 的 parseReferenceCell 靠它
+ * 從這行文字反解出 publishedDate，改動這裡的格式時記得同步改那邊的解析規則。
+ * @param {{resolvedUri: string, pageTitle: string|null, publishedDate?: string|null}} source
  * @param {string} label 顯示用標籤(媒體名稱或來源自己的 title/hostname)
  * @returns {string}
  */
 function formatSourceLine(source, label) {
   const safeLabel = label || source.title || source.hostname || '來源';
-  if (source.pageTitle) {
-    return `${safeLabel}：${source.pageTitle} ${source.resolvedUri}`;
-  }
-  return `${safeLabel}：${source.resolvedUri}`;
+  const dateLabel = source.publishedDate || 'unknown date';
+  const base = source.pageTitle
+    ? `${safeLabel}：${source.pageTitle} ${source.resolvedUri}`
+    : `${safeLabel}：${source.resolvedUri}`;
+  return `${base} ｜發布日期：${dateLabel}`;
 }
 
 /**
@@ -294,7 +368,9 @@ function buildMediaMatchText(item, availableSources) {
 
     if (matches.length === 1) {
       usedUrls.add(matches[0].resolvedUri);
-      lines.push(`${formatSourceLine(matches[0], mediaName)}(僅媒體名比對)`);
+      // 註記併入標籤(而不是附加在整行結尾)，避免蓋掉 formatSourceLine 結尾固定的
+      // 「｜發布日期：...」格式(parseReferenceCell 靠那個結尾反解日期)。
+      lines.push(formatSourceLine(matches[0], `${mediaName}(僅媒體名比對)`));
     } else {
       matches.forEach((m) => usedUrls.add(m.resolvedUri));
       lines.push(`${mediaName}（比對到 ${matches.length} 筆，需人工確認）：`);
@@ -403,6 +479,8 @@ function parseContentMatchResponse(rawText, sourceCount, itemCount) {
 module.exports = {
   MEDIA_DOMAIN_ALIASES,
   extractGroundingSources,
+  extractDateFromHtml,
+  normalizePublishedDate,
   resolveRedirectUrl,
   resolveAllRedirects,
   hostnameFromUrl,

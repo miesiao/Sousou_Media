@@ -787,7 +787,7 @@
     <div class="btn-row">
       <button type="button" id="nav-compose" class="btn btn-secondary hidden">上稿</button>
       <button type="button" id="nav-candidates" class="btn btn-secondary hidden">候選題目</button>
-      <button type="button" id="nav-drafts" class="btn btn-secondary hidden">撰寫中</button>
+      <button type="button" id="nav-drafts" class="btn btn-secondary hidden">文稿</button>
       <button type="button" id="btn-logout" class="btn btn-secondary hidden">登出</button>
     </div>
   </header>
@@ -973,13 +973,13 @@
     </div>
   </section>
 
-  <!-- ========== 撰寫中草稿畫面(左：卡片清單／右：檢視或編輯) ========== -->
+  <!-- ========== 文稿畫面(左：卡片清單／右：檢視或編輯) ========== -->
   <section id="view-drafts" class="card hidden">
-    <h2 class="section-title">撰寫中</h2>
+    <h2 class="section-title">文稿</h2>
     <div id="drafts-alert"></div>
     <div id="drafts-loading" class="loading-box hidden">
       <div class="spinner"></div>
-      <div>正在讀取撰寫中的文章…</div>
+      <div>正在讀取文稿…</div>
     </div>
 
     <div id="drafts-split" class="drafts-split hidden">
@@ -988,7 +988,7 @@
       </div>
 
       <div class="drafts-detail-col">
-        <div id="drafts-detail-empty" class="empty-hint hidden">目前沒有撰寫中的文章。可到「候選題目」頁面挑選「已選」的題目按「開始撰寫」生成初稿。</div>
+        <div id="drafts-detail-empty" class="empty-hint hidden">目前沒有文稿。可到「候選題目」頁面挑選「已選」的題目按「開始撰寫」生成初稿。</div>
 
         <div id="drafts-detail" class="hidden">
           <div class="drafts-detail-header">
@@ -1077,6 +1077,7 @@
     candidates: [],           // 目前候選圖清單
     selectedOrder: [],        // 已選圖片 id，依選取順序
     candidatesList: [],       // 研究段候選題目清單(Google Sheets「候選題目」分頁)
+    candidatesLoaded: false,  // 本次登入是否已經成功讀取過候選題目一次(切換分頁時靠這個避免重複打 API，見 el.navCandidates 的 click handler)
     candidatesViewMode: 'status',  // 'status' | 'date' — 左欄當前檢視(兩者互斥)
     candidatesViewStatus: '未決',  // 狀態檢視時選中的狀態，預設「未決」
     candidatesViewDate: null,      // 日期檢視時選中的日期
@@ -1086,6 +1087,7 @@
     candidatesResearching: false,  // 「再搜 3 則」是否執行中(防止重複送出)
     writingRows: [],           // 目前正在生成初稿(呼叫 /api/write 中)的候選 rowNumber 清單
     articlesList: [],          // 「撰寫中」文章清單(Google Sheets「文章」分頁)
+    articlesLoaded: false,     // 本次登入是否已經成功讀取過文稿一次(切換分頁時靠這個避免重複打 API，見 el.navDrafts 的 click handler)
     selectedArticleRowNumber: null, // 撰寫中頁面右欄目前顯示的文章 rowNumber
     articleEditMode: false,    // 右欄目前是「檢視」還是「編輯」模式
     submitOrigin: null         // 這次 /api/submit 是從哪裡觸發('compose' | 'drafts')，決定「返回修改文章」要回哪一頁
@@ -1595,6 +1597,12 @@
 
     apiFetch('/api/publish', { method: 'POST', body: { taskId: state.taskId, selectedIds: selectedIds } })
       .then(function (data) {
+        // 這次上稿若是從「文稿」頁面編輯送出的草稿，成功後該列會被後端標記「已定稿」，
+        // 不再屬於「撰寫中」——清掉快取旗標，下次切回「文稿」分頁才會重新讀取，
+        // 不會沿用還沒定稿前的舊清單繼續顯示這篇。
+        if (state.submitOrigin === 'drafts') {
+          state.articlesLoaded = false;
+        }
         renderResult(data);
         showView('viewResult');
       })
@@ -1687,9 +1695,15 @@
     showView('viewCompose');
   });
 
+  // 切換分頁不重新打 API——Sheets 資料不常變動，且 Railway 用量吃緊，同一次登入內
+  // 只在第一次進入、或按了「重新整理／再搜N則／手動新增／開始撰寫」等真的會改資料的
+  // 動作時才重新讀取。真的想看到剛在別處(如 Google Sheet 本身)改過的資料，
+  // 按瀏覽器重新整理(Ctrl+F5)即可，或直接按「重新整理」按鈕。
   el.navCandidates.addEventListener('click', function () {
     showView('viewCandidates');
-    loadCandidates();
+    if (!state.candidatesLoaded) {
+      loadCandidates();
+    }
   });
 
   el.btnCandidatesRefresh.addEventListener('click', function () {
@@ -1730,6 +1744,7 @@
     return apiFetch('/api/candidates', { method: 'GET' })
       .then(function (data) {
         state.candidatesList = Array.isArray(data.items) ? data.items : [];
+        state.candidatesLoaded = true;
         state.candidatesVisibleCount = 10;
         if (state.candidatesRandomSample) {
           regenerateRandomPicks();
@@ -1907,7 +1922,9 @@
           var innerHtml = mediaHtml && titleText
             ? mediaHtml + '｜' + titleText
             : (mediaHtml || titleText || escapeHtml(src.url));
-          return '<a href="' + escapeHtml(src.url) + '" target="_blank" rel="noopener">' + innerHtml + '</a>';
+          var dateHtml = '<span class="helper-text candidate-source-date">（' +
+            escapeHtml(src.publishedDate || 'unknown date') + '）</span>';
+          return '<a href="' + escapeHtml(src.url) + '" target="_blank" rel="noopener">' + innerHtml + '</a>' + dateHtml;
         }).join('')
       : '<span class="helper-text">（無參考連結）</span>';
 
@@ -1969,7 +1986,7 @@
   }
 
   // ---- 「開始撰寫」：呼叫 /api/write 生成初稿，成功後建立新的一列「撰寫中」文章，
-  // 並直接跳到「撰寫中」頁面，新文章依建立順序排在卡片清單最後一張。 ----
+  // 並直接跳到「文稿」頁面，新文章 rowNumber 最大，依目前排序規則排在卡片清單最上面。 ----
 
   function handleStartWriting(rowNumber, model) {
     if (state.writingRows.indexOf(rowNumber) !== -1) return;
@@ -2183,9 +2200,13 @@
 
   // ---------------- 撰寫中：左欄卡片清單 + 右欄檢視/編輯 ----------------
 
+  // 同上：切換到「文稿」分頁不重新打 API，只在第一次進入這個分頁時讀取一次；
+  // 之後靠「開始撰寫」/ 儲存草稿等會改資料的動作各自觸發重新讀取(見 handleStartWriting)。
   el.navDrafts.addEventListener('click', function () {
     showView('viewDrafts');
-    loadArticles();
+    if (!state.articlesLoaded) {
+      loadArticles();
+    }
   });
 
   // 「修改指示紀錄」欄目前只在生成時寫入一行「使用模型：Claude(YYYY-MM-DD)」，
@@ -2219,8 +2240,8 @@
     return expected + '\n\n' + String(content || '');
   }
 
-  // 讀取「撰寫中」文章清單。forceSelectRowNumber 有值且存在於清單中時強制選取該篇
-  // (剛生成完初稿時使用)；否則優先保留目前選取，都沒有則預設選第一篇(卡片清單最上面，最舊的一篇)。
+  // 讀取「文稿」清單。forceSelectRowNumber 有值且存在於清單中時強制選取該篇
+  // (剛生成完初稿時使用)；否則優先保留目前選取，都沒有則預設選第一篇(卡片清單最上面，最新的一篇)。
   function loadArticles(forceSelectRowNumber) {
     clearAlert(el.draftsAlert);
     el.draftsLoading.classList.remove('hidden');
@@ -2229,7 +2250,8 @@
     return apiFetch('/api/articles?status=' + encodeURIComponent('撰寫中'), { method: 'GET' })
       .then(function (data) {
         state.articlesList = Array.isArray(data.items) ? data.items : [];
-        var sorted = state.articlesList.slice().sort(function (a, b) { return a.rowNumber - b.rowNumber; });
+        state.articlesLoaded = true;
+        var sorted = state.articlesList.slice().sort(function (a, b) { return b.rowNumber - a.rowNumber; });
 
         if (forceSelectRowNumber && sorted.some(function (i) { return i.rowNumber === forceSelectRowNumber; })) {
           state.selectedArticleRowNumber = forceSelectRowNumber;
@@ -2239,7 +2261,7 @@
         state.articleEditMode = false;
       })
       .catch(function (err) {
-        setAlert(el.draftsAlert, err.message || '讀取撰寫中文章失敗，請重試。', 'error');
+        setAlert(el.draftsAlert, err.message || '讀取文稿失敗，請重試。', 'error');
       })
       .then(function () {
         renderDraftsList();
@@ -2249,9 +2271,9 @@
       });
   }
 
-  // 左欄卡片：上到下依 rowNumber 由小到大(舊到新)排列，最新一篇排在最後(最下面)。
+  // 左欄卡片：上到下依 rowNumber 由大到小(新到舊)排列，最新一篇排在最上面。
   function renderDraftsList() {
-    var items = state.articlesList.slice().sort(function (a, b) { return a.rowNumber - b.rowNumber; });
+    var items = state.articlesList.slice().sort(function (a, b) { return b.rowNumber - a.rowNumber; });
 
     el.draftsCardList.innerHTML = items.map(function (item) {
       var active = item.rowNumber === state.selectedArticleRowNumber;

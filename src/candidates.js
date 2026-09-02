@@ -36,6 +36,10 @@ const DEDUP_KEEP_MONTHS = 6;
 const DEDUP_MAX_TITLES = 150;
 
 const URL_REGEX = /https?:\/\/\S+/;
+// src/grounding.js 的 formatSourceLine() 固定在每行結尾附上「｜發布日期：...」，這裡靠這個
+// 結尾格式反解出 publishedDate；兩邊格式需同步修改。舊資料(改版前寫入、沒有這段結尾)
+// 比對不到就留空，由呼叫端顯示為「unknown date」。
+const DATE_SUFFIX_REGEX = /｜發布日期[：:]\s*(.+?)\s*$/;
 
 /**
  * 把 Sheet 讀到的原始狀態值正規化成四態之一。
@@ -67,12 +71,13 @@ function splitReferenceLabel(rawLabel) {
 }
 
 /**
- * 解析「參考資料」欄位文字(src/research.js 寫入格式：每行「媒體名稱：文章標題 網址」，
- * 或比對不到來源時的「來源未比對到...」備援清單)。
+ * 解析「參考資料」欄位文字(src/research.js 寫入格式：每行「媒體名稱：文章標題 網址
+ * ｜發布日期：YYYY-MM-DD」，或比對不到來源時的「來源未比對到...」備援清單)。
  * 抓出每行的網址部分當作 sourceUrls(媒體名稱/文章標題分開存放，供前端分別套用樣式)，
- * 抓不到網址的行當作備註文字。
+ * 抓不到網址的行當作備註文字；抓不到「｜發布日期：」結尾(含改版前的舊資料)一律標記
+ * publishedDate 為 'unknown date'，不強行猜測。
  * @param {string} raw
- * @returns {{sourceUrls: Array<{mediaLabel: string, articleTitle: string, url: string}>, note: string}}
+ * @returns {{sourceUrls: Array<{mediaLabel: string, articleTitle: string, url: string, publishedDate: string}>, note: string}}
  */
 function parseReferenceCell(raw) {
   const lines = String(raw || '')
@@ -90,13 +95,16 @@ function parseReferenceCell(raw) {
       continue;
     }
     const url = match[0];
+    const afterUrl = line.slice(match.index + url.length);
+    const dateMatch = afterUrl.match(DATE_SUFFIX_REGEX);
+    const publishedDate = (dateMatch && dateMatch[1].trim()) || 'unknown date';
     const rawLabel = line
       .slice(0, match.index)
       .replace(/[：:]\s*$/, '')
       .replace(/^-\s*/, '') // 媒體名稱比對到多筆時的清單前綴(見 grounding.js buildMediaMatchText)
       .trim();
     const { mediaLabel, articleTitle } = splitReferenceLabel(rawLabel);
-    sourceUrls.push({ mediaLabel, articleTitle, url });
+    sourceUrls.push({ mediaLabel, articleTitle, url, publishedDate });
   }
 
   return { sourceUrls, note: noteLines.join(' ') };
@@ -130,7 +138,7 @@ function getSheetsClient() {
 /**
  * 讀取「候選題目」分頁全部候選(含 rowNumber，供更新狀態時定位列)。
  * 分頁尚未存在(研究段還沒執行過)時視為沒有候選，回傳空陣列而不是報錯。
- * @returns {Promise<Array<{rowNumber:number, date:string, status:string, category:string, title:string, research:string, sourceLanguages:string, taiwanHook:string, sourceUrls:Array<{mediaLabel:string,articleTitle:string,url:string}>, referenceNote:string}>>}
+ * @returns {Promise<Array<{rowNumber:number, date:string, status:string, category:string, title:string, research:string, sourceLanguages:string, taiwanHook:string, sourceUrls:Array<{mediaLabel:string,articleTitle:string,url:string,publishedDate:string}>, referenceNote:string}>>}
  */
 async function listCandidates() {
   const missing = missingEnv();
