@@ -453,6 +453,42 @@ app.post('/api/articles/:rowNumber/draft', async (req, res) => {
   }
 });
 
+// POST /api/articles/:rowNumber/save-to-drive — 已上稿頁面「重新存檔到 Drive」：
+// 把該列文章目前的 Sheet 內容(正本)轉成 Google Doc，覆蓋寫回既有的 Drive 檔案(同一個
+// fileId，不會另外多產生新檔案)。這是單向的 Sheet → Drive 推送，見 googleDrive.js 開頭說明。
+// 只用來重新同步「已經上稿過、已經有 driveFileId」的文章，還沒定稿過的列沒有檔案可以覆蓋。
+app.post('/api/articles/:rowNumber/save-to-drive', async (req, res) => {
+  const rowNumber = parseInt(req.params.rowNumber, 10);
+
+  if (!Number.isInteger(rowNumber) || rowNumber < 2) {
+    return res.status(400).json({ error: '缺少或無效的 rowNumber' });
+  }
+
+  try {
+    const { listArticles } = require('./articles');
+    const { updateArticleDoc } = require('./googleDrive');
+
+    const items = await listArticles();
+    const article = items.find((a) => a.rowNumber === rowNumber);
+    if (!article) {
+      return res.status(404).json({ error: '找不到指定的文章' });
+    }
+    if (!article.driveFileId) {
+      return res.status(400).json({ error: '這篇文章還沒有 Drive 檔案可以覆蓋，請先走一次完整上稿流程定稿' });
+    }
+
+    const { fileUrl } = await updateArticleDoc({
+      fileId: article.driveFileId,
+      title: article.title,
+      content: article.content,
+    });
+    return res.json({ ok: true, fileUrl });
+  } catch (err) {
+    console.error('[articles] 重新存檔到 Drive 失敗：', err && err.message);
+    return res.status(500).json({ error: `重新存檔到 Drive 失敗：${err && err.message}` });
+  }
+});
+
 // POST /api/publish — 上稿：WP 草稿 + Drive 存檔 + Sheets 記錄。
 app.post('/api/publish', async (req, res) => {
   const { taskId, selectedIds } = req.body || {};

@@ -1,7 +1,8 @@
 'use strict';
 
 // 隅消息上稿系統 — 上稿 orchestration
-// 依序執行：下載選定配圖 → WordPress 草稿 → 取得文章編號(讀 Sheets) → Drive 存檔(.md) → Sheets 記錄一列。
+// 依序執行：下載選定配圖 → WordPress 草稿(暫停中，見 WORDPRESS_ENABLED) → 取得文章編號(讀 Sheets)
+// → Drive 存檔(原生 Google Doc) → Sheets 記錄一列。
 // 任一步失敗要明確回報到哪一步，並保留已成功的部分(不自動回滾，讓人工補救)。
 // 每一步動作前先用該模組 missingEnv() 檢查，缺變數時在「動作發生前」就標記該步失敗。
 
@@ -15,6 +16,11 @@ const { triggerDownload } = require('./imageSearch/unsplash');
 // 外部呼叫的 timeout 上限(毫秒)。
 const IMAGE_DOWNLOAD_TIMEOUT_MS = 30 * 1000; // 單張原圖下載 30s
 const EXTERNAL_CALL_TIMEOUT_MS = 30 * 1000;  // WP / Drive / Sheets 模組呼叫 30s
+
+// WordPress 草稿功能一直沒有成功建立過，先暫停整條路徑(不呼叫 WordPress API)，
+// 上稿流程只做 Drive 存檔 + Sheets 記錄。之後要重新開發時把這個改回 true 即可，
+// stepWordpress() 本身邏輯保留、沒有刪除。
+const WORDPRESS_ENABLED = false;
 
 /**
  * 為任意 Promise 加上 timeout 保護，逾時以清楚訊息 reject。
@@ -250,7 +256,7 @@ function buildArticleMarkdown(task) {
 
 /**
  * 步驟：Google Drive 存檔。
- * 文章 Markdown 直接上傳到根資料夾(不建子資料夾)，檔名為「編號_標題.md」；
+ * 文章以原生 Google Doc 格式直接上傳到根資料夾(不建子資料夾)，檔名為「編號_標題」；
  * 配圖(若有選圖且成功下載)上傳到固定的「picture」資料夾，檔名為「編號_序號.副檔名」
  * (序號與選取順序一致，第 1 張即 WordPress 的精選圖片)。
  * @param {object} task
@@ -271,10 +277,10 @@ async function stepDrive(task, images, number) {
   let fileId = '';
   let articleFilename = '';
 
-  // 文章 Markdown。
+  // 文章(以原生 Google Doc 格式上傳，見 googleDrive.js 開頭說明)。
   try {
     const uploaded = await withTimeout(
-      googleDrive.uploadArticleMarkdown({
+      googleDrive.uploadArticleDoc({
         number,
         title: task.title,
         content: buildArticleMarkdown(task),
@@ -410,8 +416,10 @@ async function publishArticle(task, selectedIds) {
     }
   }
 
-  // ---- 步驟 2：WordPress ----
-  const wp = await stepWordpress(task, images);
+  // ---- 步驟 2：WordPress(暫停中，見 WORDPRESS_ENABLED 說明) ----
+  const wp = WORDPRESS_ENABLED
+    ? await stepWordpress(task, images)
+    : { status: 'skipped', message: 'WordPress 功能暫停中，未建立草稿(之後再開發)', draftEditUrl: '', draftId: null, editUrl: '' };
 
   // ---- 步驟 3：取得文章編號(Drive 檔名與 Sheets 列共用) ----
   const sheetsMiss = sheets.missingEnv();

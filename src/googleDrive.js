@@ -1,11 +1,20 @@
 'use strict';
 
 // 隅消息上稿系統 — Google Drive 整合
-// 文章 Markdown 不建子資料夾，直接把「編號_標題.md」上傳到 DRIVE_ROOT_FOLDER_ID 底下；
+// 文章不建子資料夾，直接把「編號_標題」以「原生 Google Doc」格式上傳到 DRIVE_ROOT_FOLDER_ID
+// 底下(不是純文字 .md 檔)，這樣使用者可以在 Drive 裡直接雙擊開啟編輯，不用下載修改再上傳；
 // 配圖則上傳到 DRIVE_ROOT_FOLDER_ID 底下固定的「picture」資料夾，檔名為「編號_序號.副檔名」。
+//
+// 【Google Sheet 才是正本，Drive 上的 Doc 只是單向推送出去的展示/備份檔】
+// 文章內容的正本永遠是 Sheet「文章」分頁 F 欄；Drive 這份 Doc 只在(a)文章第一次定稿、
+// (b)使用者在上稿系統按「重新存檔」時，才會用 Sheet 當下內容整個覆蓋重寫(見 updateArticleDoc)。
+// 如果直接在 Drive 網頁上編輯這份 Doc，那個修改只留在 Drive、不會回寫進 Sheet，下次再按
+// 「重新存檔」就會被 Sheet 內容蓋掉消失——這是刻意的設計(單向同步，避免雙向同步的格式
+// 轉換失真跟衝突判斷)，不是 bug。
 
 const { google } = require('googleapis');
 const { Readable } = require('stream');
+const { marked } = require('marked');
 const { missingAuthEnv, getAuthClient } = require('./googleAuth');
 
 // 單一 API 呼叫的 timeout（毫秒）。
@@ -207,15 +216,42 @@ async function getPictureFolderId() {
 }
 
 /**
- * 把文章 Markdown 直接上傳到 DRIVE_ROOT_FOLDER_ID 底下（不建子資料夾），
- * 檔名為「編號_標題.md」（標題已 sanitize 並截斷）。
+ * 簡易 HTML 跳脫，只處理放進 <title> 標籤會需要的最小範圍（& < >）。
+ * @param {string} str
+ * @returns {string}
+ */
+function escapeHtmlMinimal(str) {
+  return String(str == null ? '' : str)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
+}
+
+/**
+ * 把文章 Markdown 轉成一份完整 HTML 文件，供 Drive 匯入轉成原生 Google Doc 用。
+ * 一定要先轉成 HTML 再交給 Drive 轉檔——直接把 Markdown 原始文字丟給 Drive，
+ * `#`、`**`、`>` 這些符號只會變成 Doc 裡的普通文字，不會被解析成真正的標題/粗體/引用格式。
+ * @param {string} title
+ * @param {string} content
+ * @returns {string}
+ */
+function buildArticleDocHtml(title, content) {
+  const bodyHtml = marked.parse(String(content == null ? '' : content));
+  return `<!DOCTYPE html><html><head><meta charset="utf-8"><title>${escapeHtmlMinimal(title)}</title></head><body>${bodyHtml}</body></html>`;
+}
+
+/**
+ * 把文章以「原生 Google Doc」格式上傳到 DRIVE_ROOT_FOLDER_ID 底下（不建子資料夾），
+ * 檔名為「編號_標題」（標題已 sanitize 並截斷；原生 Doc 不用副檔名，不再是 .md）。
+ * 上傳時指定 requestBody.mimeType 為 Google Doc 類型、media.mimeType 為 text/html，
+ * Drive 會自動把 HTML 內容匯入轉成可直接雙擊編輯的 Google Doc。
  * @param {object} params
  * @param {number} params.number 文章編號
  * @param {string} params.title 文章標題
  * @param {string} params.content 文章 Markdown 內容
  * @returns {Promise<{ fileId: string, fileUrl: string, filename: string }>}
  */
-async function uploadArticleMarkdown({ number, title, content }) {
+async function uploadArticleDoc({ number, title, content }) {
   const missing = missingEnv();
   if (missing.length > 0) {
     throw new Error(
@@ -223,18 +259,87 @@ async function uploadArticleMarkdown({ number, title, content }) {
     );
   }
 
-  const filename = `${number}_${sanitizeTitle(title)}.md`;
-  const { fileId } = await uploadFile(
-    process.env.DRIVE_ROOT_FOLDER_ID,
+  const drive = getDriveClient();
+  const filename = `${number}_${sanitizeTitle(title)}`;
+  const html = buildArticleDocHtml(title, content);
+
+  let response;
+  try {
+    response = await drive.files.create(
+      {
+        supportsAllDrives: true,
+        requestBody: {
+          name: filename,
+          parents: [process.env.DRIVE_ROOT_FOLDER_ID],
+          mimeType: 'application/vnd.google-apps.document',
+        },
+        media: {
+          mimeType: 'text/html',
+          body: Readable.from(html),
+        },
+        fields: 'id',
+      },
+      { timeout: API_TIMEOUT_MS }
+    );
+  } catch (err) {
+    throw wrapApiError(err, `上傳文章文件「${filename}」`);
+  }
+
+  const fileId = response.data.id;
+  return {
+    fileId,
+    fileUrl: `https://docs.google.com/document/d/${fileId}/edit`,
     filename,
-    content,
-    'text/markdown'
-  );
+  };
+}
+
+/**
+ * 重新存檔：把文章目前的內容整個覆蓋寫回「已存在」的 Drive Doc(同一個 fileId，不會
+ * 另外多產生一個新檔案)。用於使用者在上稿系統編輯過已定稿文章之後，手動同步到 Drive。
+ *
+ * 【重要，單向同步】這是「Sheet → Drive」單向推送。如果之前有人直接在 Drive 網頁上
+ * 編輯過這份 Doc，那個修改不會被讀回來、會被這次呼叫整個覆蓋消失——文章內容的正本
+ * 永遠是 Sheet「文章」分頁 F 欄，Drive 上的 Doc 只是展示/備份用途，見本檔案開頭說明。
+ * @param {object} params
+ * @param {string} params.fileId 既有 Drive 文件 ID(文章 Sheet J 欄的 driveFileId)
+ * @param {string} params.title 文章標題
+ * @param {string} params.content 文章 Markdown 內容
+ * @returns {Promise<{ fileId: string, fileUrl: string }>}
+ */
+async function updateArticleDoc({ fileId, title, content }) {
+  const missing = missingEnv();
+  if (missing.length > 0) {
+    throw new Error(
+      `Google Drive 未設定（缺少 ${missing.join('、')}），無法重新存檔`
+    );
+  }
+  if (!fileId || typeof fileId !== 'string') {
+    throw new Error('缺少 Drive 文件 ID，無法重新存檔(這篇文章可能還沒有成功存過 Drive)');
+  }
+
+  const drive = getDriveClient();
+  const html = buildArticleDocHtml(title, content);
+
+  try {
+    await drive.files.update(
+      {
+        fileId,
+        supportsAllDrives: true,
+        media: {
+          mimeType: 'text/html',
+          body: Readable.from(html),
+        },
+        fields: 'id',
+      },
+      { timeout: API_TIMEOUT_MS }
+    );
+  } catch (err) {
+    throw wrapApiError(err, '重新存檔到 Drive');
+  }
 
   return {
     fileId,
-    fileUrl: `https://drive.google.com/file/d/${fileId}/view`,
-    filename,
+    fileUrl: `https://docs.google.com/document/d/${fileId}/edit`,
   };
 }
 
@@ -242,6 +347,7 @@ module.exports = {
   missingEnv,
   sanitizeTitle,
   uploadFile,
-  uploadArticleMarkdown,
+  uploadArticleDoc,
+  updateArticleDoc,
   getPictureFolderId,
 };
