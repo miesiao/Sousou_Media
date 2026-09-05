@@ -17,6 +17,17 @@
 // 2. buildExtractionPrompt(reportText)：把第 1 段的自然語言報告餵回去，這次不開搜尋工具，
 //    純粹要求轉成結構化 JSON——這一步沒有搜尋工具，所以強制 JSON 輸出不會有副作用。
 // 兩段各自呼叫 Gemini，src/research.js 負責串起來。
+//
+// 可調整的 prompt 文字都獨立成 .md 文字檔，改文字檔即可、不用碰這支程式：
+// - researchInstructions.md：第一段(搜尋)的人設與選題原則全文。
+// - extractionInstructions.md：第二段(轉 JSON)的轉換規則全文。
+// - categoryDefinitions.md：分類定義(兩段都會用到)。
+// - eventDateRule.md：事件時間點欄位規則(兩段都會用到)。
+// 這些檔案裡的 {{PLACEHOLDER}} 是唯一的動態插值點，由 render() 換成實際內容，
+// 不要手動編輯 {{ }} 記號本身。
+
+const fs = require('fs');
+const path = require('path');
 
 // 每次研究段要產出的候選則數(建議值，Gemini 不一定精確符合，實際以解析出的有效候選為準)。
 const CANDIDATE_COUNT = 10;
@@ -24,36 +35,30 @@ const CANDIDATE_COUNT = 10;
 // category 欄位的封閉清單——對應網站實際使用的分類，模型不得自創清單以外的名稱。
 // 這裡跟 src/candidates.js、public/index.html 沒有耦合(那兩個只是把 category 當字串顯示)，
 // 純粹是給 prompt 用的分類定義，之後網站分類調整只需要改這裡。
+// 注意：這個陣列本身仍是程式碼(其他檔案會 require 它做驗證)，若要新增/刪除分類，
+// 記得同時更新 categoryDefinitions.md 裡對應的定義文字，兩邊要一致。
 const CATEGORIES = ['工藝', '影音', '文化', '歷史', '時事', '生活', '產業', '科技', '社會', '飲食', '永續'];
 
+const CATEGORY_DEFINITIONS_TEMPLATE = fs.readFileSync(path.join(__dirname, 'categoryDefinitions.md'), 'utf8');
+const EVENT_DATE_RULE = fs.readFileSync(path.join(__dirname, 'eventDateRule.md'), 'utf8');
+const RESEARCH_INSTRUCTIONS = fs.readFileSync(path.join(__dirname, 'researchInstructions.md'), 'utf8');
+const EXTRACTION_INSTRUCTIONS = fs.readFileSync(path.join(__dirname, 'extractionInstructions.md'), 'utf8');
+
 // 分類定義區塊：研究(第一段)跟轉換(第二段)都會用到，只維護一份避免兩段定義不一致。
-const CATEGORY_DEFINITIONS = `【分類定義 — category 只能是以下 ${CATEGORIES.length} 個之一，不得自創清單以外的分類名稱】
-- 工藝：傳統手工技藝、職人技術、材料與工法、工藝復振
-- 影音：電影、電視、音樂、串流內容、影展、當地流行文化產出
-- 文化：現今仍在運作的民俗、信仰、節慶、語言、藝術與生活儀式
-- 歷史：已成過去的事件與脈絡，含古文明、考古發現、殖民歷史與遺緒、獨立運動、被遺忘的歷史人物與事件
-- 時事：近期（約一個月內）實際發生、有明確事件與時間點的新聞
-- 生活：日常生活樣貌、居住、交通、消費習慣，以及旅遊景點與秘境
-- 產業：農林漁牧礦等初級產業、製造業、在地商業模式與貿易
-- 科技：技術創新與數位服務，特別是南方國家自己發展出的解決方案（如行動支付、數位身分、低成本醫療器材）、新創、科研與太空計畫
-- 社會：長期存在的結構性議題（族群、性別、階級、移工、教育、公衛、地緣政治的社會面向等）。重點在「長久以來如此、只是還沒被介紹給台灣讀者」，不依附於單一新聞事件，也不需要有時效性
-- 飲食：在地食材、料理與飲食文化、餐飲產業、農食供應鏈
-- 永續：氣候變遷衝擊、能源轉型、資源開採與環境正義、生態保育
+const CATEGORY_DEFINITIONS = render(CATEGORY_DEFINITIONS_TEMPLATE, { CATEGORY_COUNT: CATEGORIES.length });
 
-容易混淆的界線：
-- 文化 vs 歷史：現在仍在進行、活著的實踐歸「文化」；已經結束、屬於過去的事件與脈絡歸「歷史」。
-- 產業 vs 科技：農礦製造、供應鏈、商業模式歸「產業」；技術創新、數位服務、新創與科研歸「科技」。
-- 時事 vs 社會（會影響配額，很重要）：只有具備明確事件與時間點的才算「時事」並計入時事配額；結構性、長期性的議題一律歸「社會」，不佔用時事配額。`;
-
-// 「事件時間點」欄位規則：研究(第一段)跟轉換(第二段)都會用到，只維護一份避免兩段定義不一致。
-// 這裡只問「這個主題本身綁不綁定一個時間點」，跟分類的「時事 vs 社會」判準是同一個精神，
-// 但獨立成一個欄位——因為「文化/工藝/社會」等分類的主題，仍然可能有一個值得記錄的起始時間點
-// (例如某個工藝復振運動始於哪一年)，不是只有「時事」分類才需要。
-const EVENT_DATE_RULE = `【事件時間點欄位規則】
-- 只有當這個主題本身綁定在一個具體的時間點(某個事件、某次發布、某個現象開始的時間)時才填寫。
-- 格式盡量精確：能到日就填日，只能到月就填月，只能到年就填年(例如「2026-03-15」「2026年3月」「2019年」)，不要硬凑成比實際掌握資訊更精確的格式。
-- 絕不可憑空編造或用「大約」「近年」這種模糊詞頂替——沒有把握就整個留空。
-- 主題本身是長期存在、沒有明確起點的(例如某項飲食傳統、某種持續進行的生活樣貌)，一律留空，不要勉強套一個時間點上去。`;
+/**
+ * 把樣板文字裡的 {{KEY}} 換成對應值。
+ * @param {string} template
+ * @param {Object<string,string>} vars
+ * @returns {string}
+ */
+function render(template, vars) {
+  return Object.keys(vars).reduce(
+    (text, key) => text.split(`{{${key}}}`).join(vars[key]),
+    template,
+  );
+}
 
 /**
  * 組出「避免重複」區塊：把既有題目清單(只有標題文字)塞進 prompt，要求模型不得產出
@@ -79,31 +84,13 @@ function buildDedupBlock(dedupTitles) {
 function buildResearchPrompt(count, dedupTitles) {
   const n = Number.isInteger(count) && count > 0 ? count : CANDIDATE_COUNT;
 
-  return `你現在是一位專精於「全球南方國家（Global South）」與新興市場議題的資深趨勢研究員與專欄編輯，可以使用 Google 搜尋。請實際使用 Google 搜尋查證以下每一個主題的最新資訊，不要只憑內部知識回答。
-
-【核心目標與選題原則】
-1. 範疇：鎖定全球南方國家（非已開發國家，包含拉丁美洲、非洲、東南亞、南亞、中東與中亞等）。
-2. 主題類型：包含時事、工藝、文化、科技與新創、歷史、初級產業、生活樣貌與景點秘境、社會結構性議題、飲食文化與在地食材、氣候變遷與環境正義、資源開採、生態保育、影視音內容，或是任何能引起台灣人興趣、少人知道、帶有獵奇或魔幻色彩的事務。
-3. 時事優先：若有全世界正在熱議且與全球南方相關的焦點時事，請優先納入（每批最多 5 個屬於「時事」分類的主題——注意「時事」跟「社會」的區別，見下方分類定義）。
-4. 數量與字數：嚴格挑選 ${n} 個全新主題，每個主題的研究說明需 300-500 字，包含背景、關鍵衝突或技術、對在地或全球的影響。
-5. 語系掃描範疇：掃描全球各大主要報紙、雜誌、社群媒體，主要涵蓋英文、西文、阿拉伯文及法語媒體。
-6. 去重機制（重要）：避免選擇明顯陳舊、過度泛用或已被廣泛報導到失去新鮮感的主題。
-${buildDedupBlock(dedupTitles)}
-${CATEGORY_DEFINITIONS}
-
-【回答格式】用自然語言、依序條列每一個主題即可，每個主題請包含以下欄位(用你覺得清楚的方式標示欄位名稱)：
-- 分類(必須是上面 11 個分類之一，不可自創其他名稱)
-- 標題
-- 研究說明(300-500 字)
-- 主要語言來源(例如：西班牙文、法文、阿拉伯文、英文)
-- 台灣人興趣觸發點(簡述為何這件事能引發台灣讀者的共鳴或好奇)
-- 主要參考媒體/機構名稱(1-3 個，例如：中央社、BBC、半島電視台、Wikipedia。只需要列出名稱，不需要附網址)
-- 事件時間點(見下方規則，沒有把握就留空，不要硬填)
-
-${EVENT_DATE_RULE}
-
-全程使用繁體中文全形標點(，。「」：；？！)，不要使用半形標點符號(, . : ; ? !)。
-不需要輸出 JSON 或任何程式碼格式，用一般文字條列回答即可。`;
+  return render(RESEARCH_INSTRUCTIONS, {
+    COUNT: String(n),
+    DEDUP_BLOCK: buildDedupBlock(dedupTitles),
+    CATEGORY_DEFINITIONS,
+    CATEGORY_COUNT: String(CATEGORIES.length),
+    EVENT_DATE_RULE,
+  });
 }
 
 /**
@@ -116,49 +103,13 @@ ${EVENT_DATE_RULE}
  * @returns {string}
  */
 function buildExtractionPrompt(reportText) {
-  return `以下是一份全球南方新聞主題的研究報告(自然語言、條列格式)。請把它轉換成結構化 JSON，不要輸出任何說明文字、不要用 markdown 條列、不要用任何 code fence，只回傳一個 JSON 陣列。
-
-每個元素對應報告裡的一個主題，欄位如下：
-- category：分類。必須是這 ${CATEGORIES.length} 個之一：${CATEGORIES.join('、')}。如果原文用了其他說法，請對應轉換到最接近的一個，不可自創清單以外的名稱。
-- title：標題
-- research：研究說明全文(內容逐字保留，不要摘要或改寫；半形標點需轉全形，見下方標點規則)
-- sourceLanguages：主要語言來源
-- taiwanHook：台灣人興趣觸發點
-- sourceMedia：主要參考媒體/機構名稱(陣列)。重要：如果原文這裡或研究說明裡出現任何網址(http/https 開頭的字串)，一律忽略、不要抄進 JSON 的任何欄位，只保留媒體/機構的名稱文字。
-- eventDate：事件時間點。原文若沒有明確標出、或這個主題本來就沒有時間點，一律填空字串 ""，不要自己推算或編造。
-
-${EVENT_DATE_RULE}
-
-轉換時一律使用繁體中文全形標點(，。「」：；？！)；若原文報告裡出現半形標點，請一併轉成全形，不要照抄半形符號。
-
-${CATEGORY_DEFINITIONS}
-
-格式範例：
-[
-  {
-    "category": "社會",
-    "title": "...",
-    "research": "...",
-    "sourceLanguages": "西班牙文、英文",
-    "taiwanHook": "...",
-    "sourceMedia": ["半島電視台", "Reuters"],
-    "eventDate": "2026-03"
-  },
-  {
-    "category": "文化",
-    "title": "...",
-    "research": "...",
-    "sourceLanguages": "英文",
-    "taiwanHook": "...",
-    "sourceMedia": ["Wikipedia"],
-    "eventDate": ""
-  }
-]
-
-研究報告全文如下：
----
-${reportText}
----`;
+  return render(EXTRACTION_INSTRUCTIONS, {
+    CATEGORY_COUNT: String(CATEGORIES.length),
+    CATEGORIES_JOINED: CATEGORIES.join('、'),
+    EVENT_DATE_RULE,
+    CATEGORY_DEFINITIONS,
+    REPORT_TEXT: reportText,
+  });
 }
 
 module.exports = {
